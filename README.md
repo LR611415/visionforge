@@ -28,7 +28,7 @@ VisionForge 基于开源视觉插件 ModLens 深度改造而来：接入千问�
 ### 方式一：从 npm 安装改造版（推荐）
 
 ```bash
-npx -y @deepseek-ai/dsh plugin --profile desktop add @lr611415/visionforge
+npx -y @deepseek-ai/dsh plugin --profile desktop add @lr611/visionforge
 ```
 
 安装后进入 DSH 设置 → 内置插件 → **VisionForge 配置** 卡片填写引擎与密钥，**完全重启 DSH Desktop** 生效。

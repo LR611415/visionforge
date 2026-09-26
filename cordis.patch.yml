@@ -2,4 +2,4 @@
 # package root export; bin stays the CLI, nothing imports the root otherwise).
 - insert:
     - id: visionforge
-      name: '@lr611415/visionforge'
+      name: '@lr611/visionforge'

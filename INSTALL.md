@@ -43,14 +43,14 @@ Then add the plugin for that profile (replace `<profile>` with `desktop`, `web`,
 or the name you found):
 
 ```bash
-npx -y @deepseek-ai/dsh plugin --profile <profile> add @lr611415/visionforge
+npx -y @deepseek-ai/dsh plugin --profile <profile> add @lr611/visionforge
 ```
 
 **If it fails:**
-- `404` / `not found` for `@lr611415/visionforge` → the package is not
+- `404` / `not found` for `@lr611/visionforge` → the package is not
   published yet. Use Path B (local copy), or ask the user to publish first.
 - `declares no dsh.bundle` warning → a release-age gate installed an old
-  version. Name an explicit version instead: `add @lr611415/visionforge@0.1.0`.
+  version. Name an explicit version instead: `add @lr611/visionforge@0.1.0`.
 - Network/registry error → check connectivity, then retry.
 - If the official `@liustack/modlens` is also installed, remove it first to
   avoid duplicate tool registration:
@@ -91,12 +91,12 @@ path). Go to Step 2 for the engine, then Step 3 to verify.
 ## Step 2: give it one vision engine
 
 VisionForge needs at least one working engine. The CLI is invoked as
-`npx @lr611415/visionforge` when published, or `node <dst>\dist\main.js` for a local copy
+`npx @lr611/visionforge` when published, or `node <dst>\dist\main.js` for a local copy
 (below, `visionforge` means whichever resolves). First, check what is already
 configured — it spends no quota:
 
 ```powershell
-npx @lr611415/visionforge doctor --json
+npx @lr611/visionforge doctor --json
 ```
 
 Read the `providers` section: an API provider showing `[ok]` is ready — skip to
@@ -106,10 +106,10 @@ list (rotation after auth/rate-limit/quota failures).
 ### Path 1: Qwen (千问, recommended — the engine VisionForge is built around)
 
 ```powershell
-npx @lr611415/visionforge config set qwen.apiKey <KEY>
-npx @lr611415/visionforge config set qwen.baseUrl https://maas.qianwenaiapi.com/compatible-mode/v1
-npx @lr611415/visionforge config set qwen.model qwen3.8-max
-npx @lr611415/visionforge config set provider qwen
+npx @lr611/visionforge config set qwen.apiKey <KEY>
+npx @lr611/visionforge config set qwen.baseUrl https://maas.qianwenaiapi.com/compatible-mode/v1
+npx @lr611/visionforge config set qwen.model qwen3.8-max
+npx @lr611/visionforge config set provider qwen
 ```
 
 If the user has a different Qwen endpoint or model, use their values. `qwen` is
@@ -118,10 +118,10 @@ used for vision reading AND image generation (Qwen-Image).
 ### Path 2: any OpenAI-compatible endpoint
 
 ```powershell
-npx @lr611415/visionforge config set openai.baseUrl <url>
-npx @lr611415/visionforge config set openai.apiKey <key>
-npx @lr611415/visionforge config set openai.model <model>
-npx @lr611415/visionforge config set provider openai
+npx @lr611/visionforge config set openai.baseUrl <url>
+npx @lr611/visionforge config set openai.apiKey <key>
+npx @lr611/visionforge config set openai.model <model>
+npx @lr611/visionforge config set provider openai
 ```
 
 All three fields are required, and the model must accept image input (a
@@ -130,8 +130,8 @@ text-only model will fail or hallucinate).
 ### Path 3: Anthropic (Claude)
 
 ```powershell
-npx @lr611415/visionforge config set anthropic.apiKey <sk-ant-key>
-npx @lr611415/visionforge config set provider anthropic
+npx @lr611/visionforge config set anthropic.apiKey <sk-ant-key>
+npx @lr611/visionforge config set provider anthropic
 ```
 
 ### Path 4: let the user fill the settings card
@@ -153,7 +153,7 @@ same `~/.modlens/config.json` — so this is equivalent to the CLI commands abov
 Run the diagnosis (spends no quota):
 
 ```powershell
-npx @lr611415/visionforge doctor
+npx @lr611/visionforge doctor
 ```
 
 **Success is the two lines under `Selected provider`:** the provider named there
@@ -179,7 +179,7 @@ To confirm the read path end to end, run one real read (this call spends one
 read against the engine):
 
 ```powershell
-npx @lr611415/visionforge -i <path-to-image>
+npx @lr611/visionforge -i <path-to-image>
 ```
 
 ---
