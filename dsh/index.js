@@ -7,7 +7,7 @@
 // The engine is spawned from ../dist/main.js inside this package:
 // no PATH lookup, no npx, the plugin and its engine version-lock together.
 //
-// Loaded via the cordis.patch.yml row `@liustack/modlens/dsh` (see the
+// Loaded via the cordis.patch.yml row `@lr611/visionforge/dsh` (see the
 // package.json `dsh.bundle` manifest). Providers, reuse grants, and guard
 // rules keep living in ~/.modlens/config.json, shared with every harness.
 import { appendFileSync, chmodSync, copyFileSync, createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
@@ -306,7 +306,7 @@ export function apply(ctx, config = {}) {
   const readImageTool = (toolName) => ({
     name: toolName,
     description:
-      'Read an image through the modlens vision bridge. Use whenever a message references an image the current model cannot see: a local file path or an http(s) URL to a screenshot, photo, chart, diagram, or document scan. Returns structured evidence with every word transcribed (ocr.full_text), layout regions in reading order, semantics, and an uncertainty list. Quote the evidence instead of guessing. For the same image and focus, call this tool once and reuse its returned evidence instead of calling again. Scheduling: when the user set visionPriority=plugin (their own keys first), and the message carries an image pasted into the composer, call this tool first with source:"auto" (reads that image) and quote its evidence; only if this tool fails, analyze the image attachment directly. When visionPriority=official, analyze the image attachment directly first; only if the model cannot see it, call this tool with source:"auto" or an explicit "path". Requires a configured modlens engine (run `npx @liustack/modlens doctor` in a terminal to check).',
+      'Read an image through the modlens vision bridge. Use whenever a message references an image the current model cannot see: a local file path or an http(s) URL to a screenshot, photo, chart, diagram, or document scan. Returns structured evidence with every word transcribed (ocr.full_text), layout regions in reading order, semantics, and an uncertainty list. Quote the evidence instead of guessing. For the same image and focus, call this tool once and reuse its returned evidence instead of calling again. Scheduling: when the user set visionPriority=plugin (their own keys first), and the message carries an image pasted into the composer, call this tool first with source:"auto" (reads that image) and quote its evidence; only if this tool fails, analyze the image attachment directly. When visionPriority=official, analyze the image attachment directly first; only if the model cannot see it, call this tool with source:"auto" or an explicit "path". Requires a configured modlens engine (run `npx @lr611/visionforge doctor` in a terminal to check).',
     parameters: {
       type: 'object',
       properties: {
@@ -410,7 +410,7 @@ export function apply(ctx, config = {}) {
     name: toolName,
     description:
       mode === 'generate'
-        ? 'Generate an image from a text description through the modlens image bridge (Qwen-Image via qwen.apiKey, or GLM-Image via glm.apiKey). Requires at least one of these keys (run `npx @liustack/modlens doctor`, or `modlens config set qwen.apiKey <key>`). Returns the saved local file path and a temporary URL. After success, copy the ENTIRE markdown block from the tool result (the [![生成的图片](图片URL)](本地预览地址) preview line plus the download line) verbatim into your final reply, and nothing else about the files: do not list the file paths as plain text and do not paste the provider URL anywhere. Clicking the preview must open the local preview address, never the provider URL. The result also carries a previewMarkdown field containing the ready preview+download markdown: reply with exactly that block as your final answer and nothing else about the files.'
+        ? 'Generate an image from a text description through the modlens image bridge (Qwen-Image via qwen.apiKey, or GLM-Image via glm.apiKey). Requires at least one of these keys (run `npx @lr611/visionforge doctor`, or `modlens config set qwen.apiKey <key>`). Returns the saved local file path and a temporary URL. After success, copy the ENTIRE markdown block from the tool result (the [![生成的图片](图片URL)](本地预览地址) preview line plus the download line) verbatim into your final reply, and nothing else about the files: do not list the file paths as plain text and do not paste the provider URL anywhere. Clicking the preview must open the local preview address, never the provider URL. The result also carries a previewMarkdown field containing the ready preview+download markdown: reply with exactly that block as your final answer and nothing else about the files.'
         : 'Edit images from a text instruction through the modlens image bridge (Qwen-Image edit only; GLM-Image does not support editing). Requires the qwen.apiKey. Input accepts 1-3 absolute local file paths or http(s) URLs (multi-image fusion: e.g. merge two faces into one scene), or the string "auto" to use the images most recently pasted into the composer (up to 3). When the message carries pasted images and the user asks to fuse / edit / modify them (e.g. merge two photos, change an expression), call this tool with input:"auto" — the official reading model understands the request, this tool performs the edit through their provider keys. Set count to request multiple outputs (1-6). Returns the saved local file path(s) and temporary URL(s). After success, copy the ENTIRE markdown block from the tool result (one preview line per image: [![生成图 N](图片URL)](本地预览地址), plus the download lines) verbatim into your final reply, and nothing else about the files: do not list the file paths as plain text and do not paste the provider URLs anywhere. Clicking a preview must open its local preview address, never the provider URL. The result also carries a previewMarkdown field containing the ready preview+download markdown: reply with exactly that block as your final answer and nothing else about the files. NOTE: input:"auto" resolves the images modlens itself tracked from pasted composer content; images uploaded via DSH attachments/drag may not be tracked, so if auto edits the wrong image, locate the actual file (e.g. in the workspace) and pass its explicit path.',
     parameters: {
       type: 'object',
@@ -2343,11 +2343,11 @@ function registerAutoRead(ctx, evidenceCache) {
  */
 const FAILURE_TEXTS = {
   store:
-    '[A pasted image could not be read: the attachment store did not return it. Tell the user, and suggest running `npx @liustack/modlens doctor`.]',
+    '[A pasted image could not be read: the attachment store did not return it. Tell the user, and suggest running `npx @lr611/visionforge doctor`.]',
   media:
-    '[A pasted image could not be read: its media type is not supported. Tell the user, and suggest running `npx @liustack/modlens doctor`.]',
+    '[A pasted image could not be read: its media type is not supported. Tell the user, and suggest running `npx @lr611/visionforge doctor`.]',
   engine:
-    '[A pasted image could not be read: the vision engine failed. Tell the user, and suggest running `npx @liustack/modlens doctor`.]',
+    '[A pasted image could not be read: the vision engine failed. Tell the user, and suggest running `npx @lr611/visionforge doctor`.]',
 }
 
 /**

@@ -131,7 +131,7 @@ npx -y @deepseek-ai/dsh plugin --profile desktop add @liustack/modlens
 ## 边界与卸载（不干扰原生 DSH）
 
 - **作用域严格限定**：前端注入的所有行为（点击拦截、按钮隐藏、样式、粘贴接管）都以命中插件图片（`img[src*="/modlens/image"]`）为前提；**DSH 原生组件、官方消息、其他插件零影响**。
-- **卸载即干净**：从插件市场 / 命令移除插件后，DSH 重启即不再注入任何脚本、不再启动本地服务、端口释放。插件的所有代码都在 `@liustack/modlens` 包内（dsh/index.js、dsh/client.js），不修改任何 DSH 官方组件——唯一的例外是历史遗留的适配器补丁 `dsh-llm-deepseek`（官方文件，DSH 更新会覆盖，见「注意事项」）。
+- **卸载即干净**：从插件市场 / 命令移除插件后，DSH 重启即不再注入任何脚本、不再启动本地服务、端口释放。插件的所有代码都在插件包内（dsh/index.js、dsh/client.js），不修改任何 DSH 官方组件——唯一的例外是历史遗留的适配器补丁 `dsh-llm-deepseek`（官方文件，DSH 更新会覆盖，见「注意事项」）。
 - **可选彻底清理**（卸载后）：
   ```powershell
   Remove-Item -Recurse -Force "C:\Users\李\.modlens"      # 插件配置与密钥

@@ -14,7 +14,7 @@
 // imports from dsh client packages — the same zero-dependency stance as the
 // host half.
 window.__ModuleLoader__.load({
-  id: '@liustack/modlens',
+  id: '@lr611/visionforge',
   factory: (require) => {
     var module = { exports: {} }
     var exports = module.exports
