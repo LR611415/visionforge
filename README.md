@@ -143,7 +143,7 @@ npx -y @deepseek-ai/dsh plugin --profile desktop add @liustack/modlens
 
 - **统一目录**：一切文件收敛在 `D:\VisionForge\` 下——生成图缓存 `D:\VisionForge\out`、粘贴原图缓存 `D:\VisionForge\out\paste`、下载默认 `D:\` 根目录（无 D 盘则在用户主目录下创建 `VisionForge` 文件夹）。不设置在项目目录内，也不散落在 C 盘临时目录。
 - DSH 官方更新会覆盖 `dsh-llm-deepseek` 适配器补丁（重做即可，备份在 `index.js.bak`）。
-- 配置文件：`C:\Users\李\.modlens\config.json`（当前：`provider=qwen`，`baseUrl=https://maas.qianwenaiapi.com/compatible-mode/v1`，`model=qwen3.8-max`，`visionPriority=plugin`，`pasteToPath=true`，`outputDir=D:\VisionForge\out`）。
+- 配置文件：`C:\Users\李\.modlens\config.json`（引擎、密钥、接口、模型、优先级、输出目录均由设置卡片维护；密钥保存后显示为 `••••••`，不暴露明文）。
 - 生成 / 缓存目录：`D:\VisionForge\out`。
 
 ## 常见问题

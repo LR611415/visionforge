@@ -103,43 +103,23 @@ Read the `providers` section: an API provider showing `[ok]` is ready — skip t
 Step 3. Otherwise configure one path below. The key may be a comma-separated
 list (rotation after auth/rate-limit/quota failures).
 
-### Path 1: Qwen (千问, recommended — the engine VisionForge is built around)
+### 配置引擎（可跳过 — 跳过不影响安装，之后可随时补）
+
+**首选（推荐）：打开设置卡片让用户填写/选择。**
+DSH 设置 → 内置插件 → **VisionForge 配置**：引擎、API Key、Base URL、模型、优先级全部前端操作；密钥保存后显示为 `••••••`。用户可跳过本步骤，之后随时打开卡片补充。
+
+CLI 等价命令（自动化 / 无界面场景；`<...>` 为占位符，取用户自己的值）：
 
 ```powershell
-npx @lr611/visionforge config set qwen.apiKey <KEY>
-npx @lr611/visionforge config set qwen.baseUrl https://maas.qianwenaiapi.com/compatible-mode/v1
-npx @lr611/visionforge config set qwen.model qwen3.8-max
-npx @lr611/visionforge config set provider qwen
+npx @lr611/visionforge config set provider <engine>              # 如 qwen / openai / anthropic
+npx @lr611/visionforge config set <engine>.apiKey <YOUR_KEY>     # 可逗号分隔多个 key 自动轮换
+npx @lr611/visionforge config set <engine>.baseUrl <URL>         # 用户自己的兼容端点
+npx @lr611/visionforge config set <engine>.model <MODEL>         # 用户选择的视觉模型
 ```
 
-If the user has a different Qwen endpoint or model, use their values. `qwen` is
-used for vision reading AND image generation (Qwen-Image).
-
-### Path 2: any OpenAI-compatible endpoint
-
-```powershell
-npx @lr611/visionforge config set openai.baseUrl <url>
-npx @lr611/visionforge config set openai.apiKey <key>
-npx @lr611/visionforge config set openai.model <model>
-npx @lr611/visionforge config set provider openai
-```
-
-All three fields are required, and the model must accept image input (a
-text-only model will fail or hallucinate).
-
-### Path 3: Anthropic (Claude)
-
-```powershell
-npx @lr611/visionforge config set anthropic.apiKey <sk-ant-key>
-npx @lr611/visionforge config set provider anthropic
-```
-
-### Path 4: let the user fill the settings card
-
-The GUI route: ask the user to open **DSH Settings → Built-in plugins →
-VisionForge 配置** and fill engine / API key / base URL / model / priority, then
-save (the key field shows `••••••` when saved). Configuration is shared — the
-same `~/.modlens/config.json` — so this is equivalent to the CLI commands above.
+- `qwen` 引擎同时用于视觉读图与图片生成（Qwen-Image）；其余引擎仅读图。
+- 模型必须接受图像输入（纯文本模型会失败或产生幻觉）。
+- 配置写入 `~/.modlens/config.json`，与设置卡片完全等价，任意一处保存即生效。
 
 > **Windows note**: `~/.modlens/config.json` holds all values, written with
 > restricted permissions. Re-running `config set` overwrites in place. If a
