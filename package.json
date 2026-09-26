@@ -1,0 +1,66 @@
+{
+    "name": "visionforge",
+    "version": "0.1.0",
+    "description": "VisionForge: vision understanding + image generation for DeepSeek Harness (DSH)",
+    "type": "module",
+    "bin": {
+        "visionforge": "./dist/main.js"
+    },
+    "scripts": {
+        "dev": "vite build --watch",
+        "build": "vite build",
+        "typecheck": "tsc --noEmit",
+        "test": "vitest run",
+        "coverage": "vitest run --coverage",
+        "lint": "biome check src scripts dsh",
+        "format": "biome check --write src scripts",
+        "prepublishOnly": "pnpm build"
+    },
+    "files": [
+        "dist",
+        "dsh",
+        "cordis.patch.yml",
+        "README.md",
+        "INSTALL.md",
+        "LICENSE"
+    ],
+    "keywords": [
+        "dsh",
+        "vision",
+        "ocr",
+        "image-generation",
+        "image-edit",
+        "qwen",
+        "multimodal",
+        "deepseek-harness",
+        "visionforge"
+    ],
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/LR611415/visionforge.git"
+    },
+    "engines": {
+        "node": ">=22.19"
+    },
+    "dependencies": {
+        "commander": "^13.1.0",
+        "undici": "^8.10.0"
+    },
+    "exports": {
+        ".": "./dsh/index.js",
+        "./dsh": "./dsh/index.js",
+        "./package.json": "./package.json",
+        "./client": "./dsh/client.js"
+    },
+    "dsh": {
+        "bundle": {
+            "patch": "./cordis.patch.yml"
+        },
+        "client": {
+            "inject": [],
+            "platform": "web",
+            "immediately": true
+        }
+    }
+}
