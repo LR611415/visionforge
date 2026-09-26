@@ -25,25 +25,18 @@ VisionForge 基于开源视觉插件 ModLens 深度改造而来：接入千问�
 
 ## 安装
 
-### 方式一：本地安装改造版（推荐，本仓库即改造源码）
+### 方式一：从 npm 安装改造版（推荐）
 
-改造版尚未发布到 npm，直接在本地安装源码：
+```bash
+npx -y @deepseek-ai/dsh plugin --profile desktop add @lr611415/visionforge
+```
 
-1. 把改造后的源码复制到 DSH 配置目录的插件依赖下：
+安装后进入 DSH 设置 → 内置插件 → **VisionForge 配置** 卡片填写引擎与密钥，**完全重启 DSH Desktop** 生效。
 
-   ```powershell
-   Copy-Item -Recurse -Force "C:\path\to\visionforge\dsh" "C:\Users\李\.dsh\profiles\desktop\node_modules\@liustack\modlens\dsh"
-   ```
+> 若本机已安装官方版 `@liustack/modlens`，请先移除再安装本包，避免两套插件同时注册同名工具：
+> `npx -y @deepseek-ai/dsh plugin --profile desktop remove @liustack/modlens`
 
-2. 声明插件（如果尚未安装过）：
-
-   ```bash
-   npx -y @deepseek-ai/dsh plugin --profile desktop add @liustack/modlens
-   ```
-
-   或把 `@liustack/modlens` 加入 profile 的 `cordis.yml` / `cordis.patch.yml` 插件清单。
-
-3. **完全重启 DSH Desktop** 生效。
+> 源码 / 本地复制兜底：见仓库 `INSTALL.md` 的 Path B（未发布或离线场景，复制 `dsh/`、`dist/`、`cordis.patch.yml`、`package.json` 到 `@liustack\modlens` 安装目录覆盖）。
 
 ### 方式二：把安装交给你的 AI（推荐给不熟悉命令行的用户）
 

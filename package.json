@@ -1,5 +1,5 @@
 {
-    "name": "visionforge",
+    "name": "@lr611415/visionforge",
     "version": "0.1.0",
     "description": "VisionForge: vision understanding + image generation for DeepSeek Harness (DSH)",
     "type": "module",

@@ -1,5 +1,5 @@
-# dsh bundle layer: mount the modlens vision plugin (dsh/index.js via the
+# dsh bundle layer: mount the visionforge vision plugin (dsh/index.js via the
 # package root export; bin stays the CLI, nothing imports the root otherwise).
 - insert:
     - id: visionforge
-      name: 'visionforge'
+      name: '@lr611415/visionforge'
