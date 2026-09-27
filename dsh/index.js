@@ -411,7 +411,7 @@ export function apply(ctx, config = {}) {
     name: toolName,
     description:
       mode === 'generate'
-        ? 'Generate an image from a text description through the modlens image bridge (Qwen-Image via qwen.apiKey, or GLM-Image via glm.apiKey). Requires at least one of these keys (run `npx @lr611/visionforge doctor`, or `modlens config set qwen.apiKey <key>`). Returns the saved local file path and a temporary URL. After success, copy the ENTIRE markdown block from the tool result (the [![生成的图片](图片URL)](本地预览地址) preview line plus the download line) verbatim into your final reply, and nothing else about the files: do not list the file paths as plain text and do not paste the provider URL anywhere. Clicking the preview must open the local preview address, never the provider URL. The result also carries a previewMarkdown field containing the ready preview+download markdown: reply with exactly that block as your final answer and nothing else about the files.'
+        ? 'Generate an image from a text description through the modlens image bridge (Qwen-Image via qwen.apiKey, or GLM-Image via glm.apiKey). Requires at least one of these keys (run `npx @lr611/visionforge doctor`, or `modlens config set qwen.apiKey <key>`). Returns the saved local file path and a temporary URL. After success, copy the ENTIRE markdown block from the tool result (the [![生成的图片](图片URL)](本地预览地址) preview line plus the download line) verbatim into your final reply, and nothing else about the files: do not list the file paths as plain text and do not paste the provider URL anywhere. Clicking the preview must open the local preview address, never the provider URL. The result also carries a previewMarkdown field containing the ready preview+download markdown: reply with exactly that block as your final answer and nothing else about the files. EVERY call outputs exactly ONE image: never call this tool multiple times to offer the user "a choice of candidates" unless the user explicitly asked for N images. When the user asks for N images, call this tool N times and vary the prompt each time (e.g. append "variant 1/N: ...") so the results differ; never repeat the same prompt verbatim across calls.'
         : 'Edit images from a text instruction through the modlens image bridge (Qwen-Image edit only; GLM-Image does not support editing). Requires the qwen.apiKey. Input accepts 1-3 absolute local file paths or http(s) URLs (multi-image fusion: e.g. merge two faces into one scene), or the string "auto" to use the images most recently pasted into the composer (up to 3). When the message carries pasted images and the user asks to fuse / edit / modify them (e.g. merge two photos, change an expression), call this tool with input:"auto" — the official reading model understands the request, this tool performs the edit through their provider keys. Set count to request multiple outputs (1-6). Returns the saved local file path(s) and temporary URL(s). After success, copy the ENTIRE markdown block from the tool result (one preview line per image: [![生成图 N](图片URL)](本地预览地址), plus the download lines) verbatim into your final reply, and nothing else about the files: do not list the file paths as plain text and do not paste the provider URLs anywhere. Clicking a preview must open its local preview address, never the provider URL. The result also carries a previewMarkdown field containing the ready preview+download markdown: reply with exactly that block as your final answer and nothing else about the files. NOTE: input:"auto" resolves the images modlens itself tracked from pasted composer content; images uploaded via DSH attachments/drag may not be tracked, so if auto edits the wrong image, locate the actual file (e.g. in the workspace) and pass its explicit path.',
     parameters: {
       type: 'object',
@@ -427,7 +427,7 @@ export function apply(ctx, config = {}) {
           : {
               input: { type: 'array', items: { type: 'string' }, description: '1-3 absolute local file paths or http(s) URLs of the images to edit/fuse (single string also accepted), or the single string "auto" to use the most recently pasted images (up to 3)' },
               prompt: { type: 'string', description: 'Editing instruction' },
-              count: { type: 'integer', minimum: 1, maximum: 6, description: 'Number of images to output (default 1)' },
+              count: { type: 'integer', minimum: 1, maximum: 6, description: 'Number of images to output (default 1). Set >1 ONLY when the user explicitly asked for multiple outputs; every output then differs from the others.' },
               size: { type: 'string', description: 'Output size, e.g. 1024x1024 (default 1024*1024)' },
               output: { type: 'string', description: 'Optional save path for the first output (default: D:\\VisionForge\\out with a timestamped name)' },
               model: { type: 'string', description: 'Optional model name (default: qwen-image-edit)' },
@@ -481,43 +481,64 @@ export function apply(ctx, config = {}) {
           throw new Error(`${toolName} needs a non-empty string "prompt".`)
         }
       }
-      const cliArgs = [CLI_PATH, mode, '--prompt', args.prompt]
-      if (mode === 'edit') cliArgs.push('--input', ...inputs)
+      // Multi-output edits run as separate single-shot edits, each with a
+      // variation suffix, so the results differ instead of being identical
+      // copies of one prompt (Qwen-Image returns near-identical frames for a
+      // repeated identical prompt). Output filenames gain a -N suffix to stay
+      // unique in the unified cache dir.
+      let outCount = 1
       if (mode === 'edit' && (typeof args.count === 'number' || typeof args.count === 'string')) {
-        const c = String(args.count).trim()
-        if (c !== '') cliArgs.push('--count', c)
+        const c = parseInt(String(args.count).trim(), 10)
+        if (Number.isFinite(c)) outCount = Math.max(1, Math.min(6, Math.floor(c)))
       }
-      if (typeof args.size === 'string' && args.size.trim() !== '') cliArgs.push('--size', args.size)
-      if (typeof args.output === 'string' && args.output.trim() !== '') {
-        // The model often fills `output` with a workspace-relative path; pin
-        // the destination into the unified output dir (keeping the filename)
-        // so the serving whitelist always matches.
-        const name = basename(args.output.trim())
-        cliArgs.push('--output', join(resolve(outputDirOf(config)), name))
+      const outputs = []
+      for (let n = 1; n <= outCount; n++) {
+        const prompt = outCount > 1 ? `${args.prompt} — 第 ${n}/${outCount} 个变体：请输出与前一张不同的构图、姿态、角度或光影` : args.prompt
+        const cliArgs = [CLI_PATH, mode, '--prompt', prompt]
+        if (mode === 'edit') cliArgs.push('--input', ...inputs)
+        if (typeof args.size === 'string' && args.size.trim() !== '') cliArgs.push('--size', args.size)
+        if (typeof args.output === 'string' && args.output.trim() !== '') {
+          // The model often fills `output` with a workspace-relative path; pin
+          // the destination into the unified output dir (keeping the filename)
+          // so the serving whitelist always matches.
+          const name = basename(args.output.trim())
+          const finalName = outCount > 1 ? name.replace(/(\.[^.]+)$/, `-${n}$1`) : name
+          cliArgs.push('--output', join(resolve(outputDirOf(config)), finalName))
+        }
+        if (typeof args.provider === 'string' && args.provider.trim() !== '') cliArgs.push('--provider', args.provider)
+        if (typeof args.model === 'string' && args.model.trim() !== '') cliArgs.push('--model', args.model)
+        cliArgs.push('--timeout', String(CLI_TIMEOUT_MS))
+        const { stdout, stderr, code } = await run(process.execPath, cliArgs, undefined)
+        if (code !== 0) {
+          throw new Error(`modlens ${mode} failed (exit ${code}): ${(stderr || stdout).trim().slice(0, 500)}`)
+        }
+        let parsed
+        try {
+          parsed = JSON.parse(stdout)
+        } catch {
+          throw new Error(`modlens ${mode} produced no JSON: ${stdout.trim().slice(0, 300)}`)
+        }
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) outputs.push(parsed)
       }
-      if (typeof args.provider === 'string' && args.provider.trim() !== '') cliArgs.push('--provider', args.provider)
-      if (typeof args.model === 'string' && args.model.trim() !== '') cliArgs.push('--model', args.model)
-      cliArgs.push('--timeout', String(CLI_TIMEOUT_MS))
-      const { stdout, stderr, code } = await run(process.execPath, cliArgs, undefined)
-      if (code !== 0) {
-        throw new Error(`modlens ${mode} failed (exit ${code}): ${(stderr || stdout).trim().slice(0, 500)}`)
-      }
-      let parsed
-      try {
-        parsed = JSON.parse(stdout)
-      } catch {
-        throw new Error(`modlens ${mode} produced no JSON: ${stdout.trim().slice(0, 300)}`)
-      }
+      const merged =
+        outputs.length === 1
+          ? outputs[0]
+          : (() => {
+              const m = { provider: outputs[0]?.provider, model: outputs[0]?.model }
+              m.urls = outputs.map((o) => o?.url).filter((x) => typeof x === 'string')
+              m.filePaths = outputs.map((o) => o?.filePath).filter((x) => typeof x === 'string')
+              return m
+            })()
       // The CLI saves to the unified cache dir (D:\VisionForge\out). The browser stays
       // the preview carrier: the local render route opens in whatever the
       // system link setting chooses (side panel or default browser) and shows
       // the picture instead of downloading it.
       // The model cannot see the rendered tool-result panel, so the ready
       // markdown (thumbnail preview + download links) rides in the value.
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        parsed.previewMarkdown = buildImageMarkdown(parsed)
+      if (merged && typeof merged === 'object' && !Array.isArray(merged)) {
+        merged.previewMarkdown = buildImageMarkdown(merged)
       }
-      return parsed
+      return merged
     },
   })
   try {
