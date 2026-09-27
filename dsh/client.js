@@ -1543,18 +1543,72 @@ window.__ModuleLoader__.load({
       try {
         var style = document.createElement('style')
         style.textContent =
-          'img[src*="/modlens/image"]{' +
+          'img[src*="/modlens/image"], img[data-vf-src]{' +
           'max-width:90px !important;max-height:90px !important;height:auto;' +
           'border-radius:8px;cursor:zoom-in;' +
           'transition:transform .18s ease,box-shadow .18s ease;' +
           'box-shadow:0 2px 8px rgba(0,0,0,.14);' +
           '}'
         ;(document.head || document.documentElement).appendChild(style)
+        scanThumbs(document)
+        try {
+          new MutationObserver(function () { scanThumbs(document) }).observe(document.body || document.documentElement, { childList: true, subtree: true })
+        } catch (err) { /* observer is a nicety */ }
         // Zooming opens the original file in the machine's default image
         // viewer (Windows photo app / default viewer) via the local
         // /modlens/open route — not DSH's built-in viewer, not an in-chat
         // lightbox. Both a click on the thumbnail and the host card's own
         // "放大/zoom" button are routed there.
+        // Renderer-level fallback: some DSH builds block <img> loads from the
+        // loopback http origin, leaving the generated picture as a broken
+        // thumbnail. Fetch the bytes ourselves (the same localhost fetch the
+        // zoom/download routes already use), downscale through a canvas and
+        // swap in a data: URL so the thumbnail always renders. The original
+        // loopback src is remembered in data-vf-src so zoom/download still
+        // resolve the real file path from it.
+        var THUMB_SIZE = 180
+        function hydrateThumb(img) {
+          try {
+            if (img.__vfThumb) return
+            img.__vfThumb = true
+            var src = img.getAttribute('src')
+            if (!src) return
+            img.setAttribute('data-vf-src', src)
+            if (img.complete && img.naturalWidth > 0) return
+            fetch(src)
+              .then(function (r) { if (!r.ok) throw new Error('thumb fetch ' + r.status); return r.blob() })
+              .then(function (blob) {
+                return new Promise(function (resolveP, rejectP) {
+                  var url = URL.createObjectURL(blob)
+                  var im = new Image()
+                  im.onload = function () {
+                    try {
+                      var w = im.naturalWidth || 1
+                      var h = im.naturalHeight || 1
+                      var scale = Math.min(1, THUMB_SIZE / Math.max(w, h))
+                      var cw = Math.max(1, Math.round(w * scale))
+                      var ch = Math.max(1, Math.round(h * scale))
+                      var cv = document.createElement('canvas')
+                      cv.width = cw
+                      cv.height = ch
+                      cv.getContext('2d').drawImage(im, 0, 0, cw, ch)
+                      img.src = cv.toDataURL('image/jpeg', 0.82)
+                      resolveP()
+                    } catch (e) { rejectP(e) } finally { URL.revokeObjectURL(url) }
+                  }
+                  im.onerror = function (e) { URL.revokeObjectURL(url); rejectP(e) }
+                  im.src = url
+                })
+              })
+              .catch(function () { /* keep the original src; the host may still render it */ })
+          } catch (err) { /* fallback is a nicety */ }
+        }
+        function scanThumbs(root) {
+          try {
+            var imgs = root.querySelectorAll ? root.querySelectorAll('img[src*="/modlens/image"]') : []
+            for (var i = 0; i < imgs.length; i++) hydrateThumb(imgs[i])
+          } catch (err) { /* scan is a nicety */ }
+        }
         var lastOpenAt = 0
         function openInSystemViewer(src) {
           try {
@@ -1571,7 +1625,7 @@ window.__ModuleLoader__.load({
         function findCardImage(elm) {
           var host = elm
           while (host && host !== document.body) {
-            var img = host.querySelector && host.querySelector('img[src*="/modlens/image"]')
+            var img = host.querySelector && host.querySelector('img[src*="/modlens/image"], img[data-vf-src]')
             if (img) return img
             host = host.parentNode
           }
@@ -1669,11 +1723,11 @@ window.__ModuleLoader__.load({
           function (event) {
             var target = event.target
             if (!target || !target.closest) return
-            var img = target.closest('img[src*="/modlens/image"]')
+            var img = target.closest('img[src*="/modlens/image"], img[data-vf-src]')
             if (img) {
               event.preventDefault()
               event.stopPropagation()
-              openInSystemViewer(img.getAttribute('src'))
+              openInSystemViewer(img.getAttribute('data-vf-src') || img.getAttribute('src'))
               return
             }
             // The host card's own zoom / download buttons: route zoom to the
@@ -1715,7 +1769,7 @@ window.__ModuleLoader__.load({
               } else if (/下载|download|save/i.test(txt)) {
                 event.preventDefault()
                 event.stopPropagation()
-                downloadLocal(cardImg.getAttribute('src'))
+                downloadLocal(cardImg.getAttribute('data-vf-src') || cardImg.getAttribute('src'))
               }
             }
           },

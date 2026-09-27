@@ -1,0 +1,18 @@
+installed version: 0.1.2
+installed name: @lr611/visionforge
+client id:   id: '@lr611/visionforge',
+port candidates present: True
+--- config.json exists ---
+{
+  "visionPriority": "plugin",
+  "providers": {
+    "qwen": {
+      "baseUrl": "https://maas.qianwenaiapi.com/compatible-mode/v1",
+      "apiKey": "sk-759fd27b0766484d9997d5055edbd4b0"
+    }
+  },
+  "pasteToPath": true,
+  "provider": "qwen",
+  "reuse": {}
+}
+

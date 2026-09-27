@@ -204,6 +204,7 @@ export function apply(ctx, config = {}) {
   // that label deserved (issue #36). Filled by registerVisionProvider as
   // wrappers land, including the later sweeps, and read by the verdict.
   const ownProviders = new Set()
+  ensureConfigDefaults()
   ensureDownloadServer(config)
   if (config.visionProvider !== false) {
     // Bundle loaders can call apply while this outer context is still waiting
@@ -2674,6 +2675,33 @@ function engineConfiguredInFile(engine, config) {
 /** ~/.modlens/config.json, the one file every harness shares. */
 function modlensConfigPath() {
   return join(homedir(), '.modlens', 'config.json')
+}
+
+/**
+ * On plugin load, make sure the shared config carries an explicit outputDir
+ * (the unified D:\VisionForge\out on Windows). The CLI and every harness read
+ * one file, so a reinstall that rebuilt config.json without the field used to
+ * silently fall back to per-environment defaults. Only an existing file is
+ * touched; a brand-new install leaves creation to the settings card.
+ */
+function ensureConfigDefaults() {
+  try {
+    const file = modlensConfigPath()
+    if (!existsSync(file)) return
+    const config = readModlensConfig()
+    if (typeof config.outputDir === 'string' && config.outputDir.trim() !== '') return
+    const def = process.platform === 'win32' ? 'D:\\VisionForge\\out' : join(homedir(), '.visionforge', 'out')
+    config.outputDir = def
+    try {
+      if (lstatSync(file).isSymbolicLink()) return
+    } catch (error) {
+      if (error?.code !== 'ENOENT') return
+    }
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 })
+  } catch {
+    // best effort: never block plugin load over a config default
+  }
 }
 
 /**
