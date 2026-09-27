@@ -692,6 +692,12 @@ function renderPreview(value) {
 // configured output dir are ever served.
 let downloadServerPort = 0
 let downloadServer = null
+// Stable loopback port candidates for the render/download server. The first
+// free candidate is chosen and kept across restarts so previously generated
+// images keep working. 43999 is deliberately NOT in the list: DSH Desktop
+// itself has been observed holding that port, which used to force a random
+// ephemeral fallback and break every older image URL on the next restart.
+const LOOPBACK_PORT_CANDIDATES = [45999, 46999, 47999, 48999]
 // Files modlens itself generated (CLI output paths) that may live outside
 // the configured output dir. Serving them is safe because only our own
 // successful generations are registered, and the loopback routes still
@@ -817,26 +823,39 @@ function ensureDownloadServer(config = {}) {
     // Stable loopback port: chat image src embeds this port, so keeping it
     // stable across restarts keeps previously generated images previewable /
     // zoomable / downloadable instead of pointing at a dead random port.
-    server.on('error', (e) => {
-      if (e && e.code === 'EADDRINUSE') {
-        // Port taken: fall back to an ephemeral port and serve as before.
-        server.removeAllListeners('error')
-        server.listen(0, '127.0.0.1', () => {
-          const addr = server.address()
-          downloadServerPort = typeof addr === 'object' && addr ? addr.port : 0
-        })
-      } else {
-        downloadServer = null
-      }
-    })
-    server.listen(43999, '127.0.0.1', () => {
+    // DSH Desktop itself has been observed holding 43999, which used to force
+    // an ephemeral fallback and break every older image URL on the next
+    // restart. Walk a fixed candidate list first (only falling back to an
+    // ephemeral port when every candidate is taken): a stable port means a
+    // DSH restart re-binds the same port and older chat images keep working.
+    let candidateIndex = 0
+    const onListenSuccess = () => {
       const addr = server.address()
       downloadServerPort = typeof addr === 'object' && addr ? addr.port : 0
       // Startup housekeeping: expire caches older than the TTL in the unified
       // output dir (generated images + paste caches). Downloads are permanent
       // and live outside this dir, so they are never touched.
       void sweepOutputCache()
-    })
+    }
+    const onListenError = (e) => {
+      if (e && e.code === 'EADDRINUSE') {
+        candidateIndex += 1
+        if (candidateIndex < LOOPBACK_PORT_CANDIDATES.length) {
+          server.removeAllListeners('error')
+          server.once('error', onListenError)
+          server.listen(LOOPBACK_PORT_CANDIDATES[candidateIndex], '127.0.0.1', onListenSuccess)
+        } else {
+          // Every fixed candidate is taken: fall back to an ephemeral port.
+          server.removeAllListeners('error')
+          server.once('error', (e2) => { if (!(e2 && e2.code === 'EADDRINUSE')) downloadServer = null })
+          server.listen(0, '127.0.0.1', onListenSuccess)
+        }
+      } else {
+        downloadServer = null
+      }
+    }
+    server.once('error', onListenError)
+    server.listen(LOOPBACK_PORT_CANDIDATES[0], '127.0.0.1', onListenSuccess)
     downloadServer = server
     return downloadServerPort
   } catch {
