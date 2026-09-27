@@ -21,16 +21,11 @@ visionforge <args>                           # 已全局安装时（PATH 上有 
 
 `doctor` 会报告哪些引擎可用、guard 判定和配置状态（不消耗配额）。
 
-## 安装到 DSH（一次性）
+## 安装（一次性）
 
-| 场景 | 做法 |
-| :-- | :-- |
-| DSH 应用内 | 打开插件市场搜索 **VisionForge**，一键安装（推荐；desktop 版由 Electron 独占管理，装/卸都走应用内） |
-| 命令行 | `npx dsh plugin add @lr611/visionforge`（非 desktop profile 适用） |
-| 体检 | `npx @lr611/visionforge doctor` — 确认引擎、密钥、端口服务正常 |
-| 卸载 | DSH 应用内移除；插件只写自己的 `~/.modlens/` 与 `D:\VisionForge\`（Windows），不影响原生 DSH 功能 |
+本 skill 默认插件已装好。尚未安装时，按仓库 `INSTALL.md` 的步骤执行（DSH 应用内插件市场搜索 VisionForge，或 `npx @lr611/visionforge doctor` 起步；配置引导见 `references/configure.zh-CN.md` 与 DSH 设置卡片）——**安装细节一律以 INSTALL.md 为准，本文件不重复安装步骤**。
 
-首次使用且 `config show` 为空时：不要猜配置。让用户到 **DSH 设置 → VisionForge 配置卡片** 填写引擎、密钥、模型（密钥框会以 `••••` 掩码保存），或引导用户自己执行 `config set`（见 `references/configure.zh-CN.md`）。**绝对不要在对话里索要、复述或写死用户的密钥和具体接口地址**。
+**红线（安装与配置全程适用）**：密钥、接口地址、模型名由**用户本人**在设置卡片或 `config set` 里填写/确认；AI 不得替用户猜、不得在对话里索要、复述或写死具体密钥与地址。用户可跳过配置，跳过后随时去 DSH 设置 → VisionForge 配置卡片补填。
 
 ## 命令速查
 
