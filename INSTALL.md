@@ -2,6 +2,18 @@
 
 > **Source**: https://github.com/LR611415/visionforge（公开仓库，可直接打开本文件或 `git clone https://github.com/LR611415/visionforge.git`）
 
+## 方式二：把安装交给你的 AI（不想读文档的人直接这么用）
+
+用户把下面这句话原样发给自己的 AI 即可，AI 会读本文件按步骤完成安装、引导填写引擎与密钥、体检并汇报：
+
+> 按 https://github.com/LR611415/visionforge 的 INSTALL.md 安装并配置 VisionForge 插件，完成后运行体检（doctor）并把结果告诉我。
+
+**AI 安装时的红线**：密钥、接口地址、模型名一律由**用户本人**在设置卡片或 `config set` 里填写/确认，AI 不得替用户猜、不得在对话里复述或写死具体密钥与地址；用户可跳过配置步骤，跳过后随时去 DSH 设置 → VisionForge 配置卡片补填。
+
+如果你的运行环境支持 Skill（如支持 SKILL.md 的 agent），可直接加载项目内 `skills/visionforge/SKILL.md`（含 `references/`），效果与本文件相同。
+
+---
+
 You are an AI agent and your user told you to install `visionforge`. This document
 is the procedure. Follow it in order. Every step is safe to run again, and every
 step names what to do when it fails. Commands are shown for PowerShell (Windows)

@@ -1,6 +1,6 @@
 {
     "name": "@lr611/visionforge",
-    "version": "0.1.4",
+    "version": "0.1.5",
     "description": "VisionForge: vision understanding + image generation for DeepSeek Harness (DSH)",
     "type": "module",
     "bin": {
@@ -19,6 +19,7 @@
     "files": [
         "dist",
         "dsh",
+        "skills",
         "cordis.patch.yml",
         "README.md",
         "INSTALL.md",

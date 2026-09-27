@@ -44,7 +44,7 @@ npx -y @deepseek-ai/dsh plugin --profile desktop add @lr611/visionforge
 
 > 按 https://github.com/LR611415/visionforge 的 INSTALL.md 安装并配置 visionforge 插件，完成后运行体检（doctor）并把结果告诉我。
 
-AI 会按 `INSTALL.md` 的步骤执行：npm 一键安装（发布后）或本地复制兜底 → 配置引擎（qwen 等）→ `doctor` 体检 → 报告结果。`INSTALL.md` 是一份专门写给 AI 的可执行文档（含失败处理与 Windows 注意），照着跑不会卡壳。
+AI 会按 `INSTALL.md` 的步骤执行：npm 一键安装（发布后）或本地复制兜底 → 配置引擎（qwen 等）→ `doctor` 体检 → 报告结果。`INSTALL.md` 是一份专门写给 AI 的可执行文档（含失败处理与 Windows 注意），照着跑不会卡壳。支持 Skill 的 AI 环境也可直接加载项目内 `skills/visionforge/SKILL.md`（含 `references/`），效果相同。
 
 ### 方式三：从插件商店安装官方版
 
