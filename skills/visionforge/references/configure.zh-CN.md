@@ -8,7 +8,7 @@
 
 ## 配置放在哪
 
-`~/.modlens/config.json`，由 CLI 管理（VisionForge 沿用该路径，与 modlens 生态互通）。优先级：CLI 参数 > 本文件 > 内置默认值。不设 `provider` 时按失败切换链依次尝试（已配置的 API 引擎先于 CLI 引擎被尝试）。
+`~/.visionforge/config.json`，由 CLI 管理（VisionForge 独立使用该路径，与 modlens 互不影响）。优先级：CLI 参数 > 本文件 > 内置默认值。不设 `provider` 时按失败切换链依次尝试（已配置的 API 引擎先于 CLI 引擎被尝试）。
 
 ```bash
 npx @lr611/visionforge config init                     # 写入一份起步配置（已存在则拒绝，--force 重写）

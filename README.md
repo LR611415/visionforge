@@ -86,7 +86,7 @@ npx -y @deepseek-ai/dsh plugin --profile desktop add @liustack/modlens
 | 生成图缓存 | `D:\VisionForge\out`（可改 `outputDir`） | 插件生成的图片，供对话预览 |
 | 粘贴原图缓存 | `D:\VisionForge\out\paste` | 粘贴接管后写入的本地副本（不再落系统临时目录） |
 | 下载永久副本 | `D:\` 根目录（无 D 盘则 `C:\Users\<你>\VisionForge`） | 点击「下载」后缓存复制到此，永久保留 |
-| 插件配置 | `C:\Users\<你>\.modlens\config.json` | 引擎、密钥、模型、优先级、输出目录 |
+| 插件配置 | `C:\Users\<你>\.visionforge\config.json` | 引擎、密钥、模型、优先级、输出目录 |
 
 ### 缓存清除机制
 
@@ -134,7 +134,7 @@ npx -y @deepseek-ai/dsh plugin --profile desktop add @liustack/modlens
 - **卸载即干净**：从插件市场 / 命令移除插件后，DSH 重启即不再注入任何脚本、不再启动本地服务、端口释放。插件的所有代码都在插件包内（dsh/index.js、dsh/client.js），不修改任何 DSH 官方组件——唯一的例外是历史遗留的适配器补丁 `dsh-llm-deepseek`（官方文件，DSH 更新会覆盖，见「注意事项」）。
 - **可选彻底清理**（卸载后）：
   ```powershell
-  Remove-Item -Recurse -Force "C:\Users\李\.modlens"      # 插件配置与密钥
+  Remove-Item -Recurse -Force "C:\Users\李\.visionforge"      # 插件配置与密钥
   Remove-Item -Recurse -Force "D:\VisionForge"            # 缓存目录（含已下载副本！先备份要留的）
   ```
 - **注意**：`D:\` 根目录下已下载的图片是独立副本，不在 `D:\VisionForge` 内，需自行确认是否保留。
@@ -143,7 +143,7 @@ npx -y @deepseek-ai/dsh plugin --profile desktop add @liustack/modlens
 
 - **统一目录**：一切文件收敛在 `D:\VisionForge\` 下——生成图缓存 `D:\VisionForge\out`、粘贴原图缓存 `D:\VisionForge\out\paste`、下载默认 `D:\` 根目录（无 D 盘则在用户主目录下创建 `VisionForge` 文件夹）。不设置在项目目录内，也不散落在 C 盘临时目录。
 - DSH 官方更新会覆盖 `dsh-llm-deepseek` 适配器补丁（重做即可，备份在 `index.js.bak`）。
-- 配置文件：`C:\Users\李\.modlens\config.json`（引擎、密钥、接口、模型、优先级、输出目录均由设置卡片维护；密钥保存后显示为 `••••••`，不暴露明文）。
+- 配置文件：`C:\Users\李\.visionforge\config.json`（引擎、密钥、接口、模型、优先级、输出目录均由设置卡片维护；密钥保存后显示为 `••••••`，不暴露明文）。
 - 生成 / 缓存目录：`D:\VisionForge\out`。
 
 ## 常见问题
@@ -161,7 +161,11 @@ A：确认卡片上出现的是「⬇ 下载」按钮（点击后资源管理器
 A：保存后密钥以 `••••••` 掩码显示；若显示为空说明该引擎未配置密钥（或保存失败），重新粘贴密钥再保存。
 
 **Q：怎么彻底卸载 VisionForge？**
-A：插件市场 / `dsh plugin remove @liustack/modlens` → 完全重启 DSH →（可选）删除 `~/.modlens` 与 `D:\VisionForge`。卸载后 DSH 原生功能不受任何影响。
+A：插件市场 / `dsh plugin remove @lr611/visionforge` → 完全重启 DSH →（可选）删除 `~/.visionforge` 与 `D:\VisionForge`。卸载后 DSH 原生功能不受任何影响。
+
+## Acknowledgements
+
+VisionForge 基于 [liustack/modlens](https://github.com/liustack/modlens)（MIT）的图像桥接设计改造而来：在其成熟的视觉解析引擎（OCR / 布局 / 语义证据、失败切换链）之上，独立实现了 Qwen / GLM 生图与编辑、粘贴直读、对话内缩略图预览、一键下载与配置卡片等能力。感谢 liustack 的开源贡献。
 
 ## License
 

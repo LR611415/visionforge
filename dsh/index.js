@@ -1,5 +1,5 @@
-// DeepSeek Harness (dsh) plugin: registers a modlens_read_image tool backed
-// by the modlens CLI that ships in this very package. dsh models are
+// DeepSeek Harness (dsh) plugin: registers a visionforge_read_image tool backed
+// by the visionforge CLI that ships in this very package. dsh models are
 // text-only, so the tool is the vision bridge; unlike prompt-triggered
 // skills, a registered tool schema reaches the model on every request, so
 // there is no trigger gamble. The name is ours rather than the host's
@@ -9,7 +9,7 @@
 //
 // Loaded via the cordis.patch.yml row `@lr611/visionforge/dsh` (see the
 // package.json `dsh.bundle` manifest). Providers, reuse grants, and guard
-// rules keep living in ~/.modlens/config.json, shared with every harness.
+// rules keep living in ~/.visionforge/config.json, shared with every harness.
 import { appendFileSync, chmodSync, copyFileSync, createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, extname, join, resolve } from 'node:path'
@@ -28,7 +28,7 @@ const CLI_PATH = fileURLToPath(new URL('../dist/main.js', import.meta.url))
 // Kept in lockstep with src/schema.ts by a repo test; the plugin file cannot
 // import the TS source and stays fully dependency-free (node builtins only).
 const OUTPUT_SCHEMA = JSON.parse(readFileSync(new URL('./vision-schema.json', import.meta.url), 'utf8'))
-// Output schema for the two image-generation tools (modlens generate / edit).
+// Output schema for the two image-generation tools (visionforge generate / edit).
 // Their CLI prints { filePath, url, provider, model, size }; the local path is
 // the durable artifact, the url is the ~24h provider link.
 const IMAGE_GEN_OUTPUT_SCHEMA = {
@@ -135,7 +135,7 @@ function cachedToolRead(cache, key, remote, load) {
 // Config schema: the 0.1.7 host Settings page renders this plugin's form
 // from it (engine dropdown, masked secret key, visionPriority dropdown,
 // pasteToPath switch, editable text fields) and stores edits in the
-// profile; apply() pushes those values into ~/.modlens/config.json so the
+// profile; apply() pushes those values into ~/.visionforge/config.json so the
 // CLI and every harness keep reading one source.
 export const Config = z.object({
   engine: z.union([
@@ -155,7 +155,7 @@ export const Config = z.object({
   pasteToPath: z.boolean().default(true).description('粘贴图片转为路径文本供文本模型读取'),
 })
 
-export const name = 'modlens'
+export const name = 'visionforge'
 export const inject = ['tools', 'agents', 'attachments', 'llm']
 
 export const MEDIA_EXT = {
@@ -169,7 +169,7 @@ export const MEDIA_EXT = {
 
 export function apply(ctx, config = {}) {
   // Push the host Settings-page form (Config schema above) into the shared
-  // ~/.modlens/config.json on every load, so the CLI and every harness read
+  // ~/.visionforge/config.json on every load, so the CLI and every harness read
   // one source. Only fields the form actually sent are written.
   try {
     const dshPatch = {}
@@ -234,12 +234,12 @@ export function apply(ctx, config = {}) {
   if (typeof ctx.inject === 'function') {
     ctx.inject(['webServer'], (scope) => {
       // The route is off when EITHER the cordis plugin config or the shared
-      // ~/.modlens/config.json says pasteToPath: false (the settings card and
+      // ~/.visionforge/config.json says pasteToPath: false (the settings card and
       // CLI share the same flag). Reading the shared file here keeps the two
       // switches consistent across every harness.
       const sharedConfig = (() => {
         try {
-          return readModlensConfig()
+          return readvisionforgeConfig()
         } catch {
           return {}
         }
@@ -252,19 +252,19 @@ export function apply(ctx, config = {}) {
       try {
         registerPasteRoute(scope, ctx, ownProviders, config)
       } catch (error) {
-        console.error(`[modlens] paste route skipped: ${error}`)
+        console.error(`[visionforge] paste route skipped: ${error}`)
       }
       // Same web server, a separate switch: turning paste-to-path off is a
       // statement about how images enter, not about whether the engine can
       // be configured. The card the browser half contributes talks to this
-      // route rather than to a settings schema, because modlens config lives
-      // in ~/.modlens/config.json and is shared with the CLI and every other
+      // route rather than to a settings schema, because visionforge config lives
+      // in ~/.visionforge/config.json and is shared with the CLI and every other
       // harness (issue #39).
       if (config.settingsCard !== false) {
         try {
           registerConfigRoute(scope)
         } catch (error) {
-          console.error(`[modlens] settings card route skipped: ${error}`)
+          console.error(`[visionforge] settings card route skipped: ${error}`)
         }
       }
     })
@@ -273,7 +273,7 @@ export function apply(ctx, config = {}) {
   // namespace: a card renders only when its slot key matches a namespace the
   // host answers for in settings.describe (issues #61, #65). The namespace
   // registered here is an empty pass-through object, because its whole job is
-  // to make the card dispatchable; the values stay in ~/.modlens/config.json,
+  // to make the card dispatchable; the values stay in ~/.visionforge/config.json,
   // behind the loopback route above, where every other harness can read them.
   // The schema is duck-typed to what the seam calls on it, callable plus
   // toJSON, the same stance the LlmAdapter takes: importing a dsh package for
@@ -288,9 +288,9 @@ export function apply(ctx, config = {}) {
           uid: 0,
           refs: { 0: { type: 'object', meta: { default: {} }, dict: {} } },
         })
-        scope.settings.register('modlens', passThrough, { base: {} })
+        scope.settings.register('visionforge', passThrough, { base: {} })
       } catch (error) {
-        console.error(`[modlens] settings namespace skipped: ${error}`)
+        console.error(`[visionforge] settings namespace skipped: ${error}`)
       }
     })
   }
@@ -307,7 +307,7 @@ export function apply(ctx, config = {}) {
   const readImageTool = (toolName) => ({
     name: toolName,
     description:
-      'Read an image through the modlens vision bridge. Use whenever a message references an image the current model cannot see: a local file path or an http(s) URL to a screenshot, photo, chart, diagram, or document scan. Returns structured evidence with every word transcribed (ocr.full_text), layout regions in reading order, semantics, and an uncertainty list. Quote the evidence instead of guessing. For the same image and focus, call this tool once and reuse its returned evidence instead of calling again. Scheduling: when the user set visionPriority=plugin (their own keys first), and the message carries an image pasted into the composer, call this tool first with source:"auto" (reads that image) and quote its evidence; only if this tool fails, analyze the image attachment directly. When visionPriority=official, analyze the image attachment directly first; only if the model cannot see it, call this tool with source:"auto" or an explicit "path". Requires a configured modlens engine (run `npx @lr611/visionforge doctor` in a terminal to check).',
+      'Read an image through the visionforge vision bridge. Use whenever a message references an image the current model cannot see: a local file path or an http(s) URL to a screenshot, photo, chart, diagram, or document scan. Returns structured evidence with every word transcribed (ocr.full_text), layout regions in reading order, semantics, and an uncertainty list. Quote the evidence instead of guessing. For the same image and focus, call this tool once and reuse its returned evidence instead of calling again. Scheduling: when the user set visionPriority=plugin (their own keys first), and the message carries an image pasted into the composer, call this tool first with source:"auto" (reads that image) and quote its evidence; only if this tool fails, analyze the image attachment directly. When visionPriority=official, analyze the image attachment directly first; only if the model cannot see it, call this tool with source:"auto" or an explicit "path". Requires a configured visionforge engine (run `npx @lr611/visionforge doctor` in a terminal to check).',
     parameters: {
       type: 'object',
       properties: {
@@ -365,13 +365,13 @@ export function apply(ctx, config = {}) {
         // concurrent caller that joined the same image read.
         const { stdout, stderr, code } = await run(process.execPath, cliArgs, undefined)
         if (code !== 0) {
-          throw new Error(`modlens failed (exit ${code}): ${(stderr || stdout).trim().slice(0, 500)}`)
+          throw new Error(`visionforge failed (exit ${code}): ${(stderr || stdout).trim().slice(0, 500)}`)
         }
         let parsed
         try {
           parsed = JSON.parse(stdout)
         } catch {
-          throw new Error(`modlens produced no JSON: ${stdout.trim().slice(0, 300)}`)
+          throw new Error(`visionforge produced no JSON: ${stdout.trim().slice(0, 300)}`)
         }
         // The canonical value is the vision result itself; routing details
         // (meta.attempts, whose quota a reused engine spent) stay operational.
@@ -391,16 +391,16 @@ export function apply(ctx, config = {}) {
   // use this name, and the model finds ours through its schema, which reaches
   // it on every request regardless of what the tool is called. `toolName`
   // still pins whatever a host prefers.
-  const preferred = config.toolName || 'modlens_read_image'
+  const preferred = config.toolName || 'visionforge_read_image'
   try {
     ctx.tools.register(readImageTool(preferred))
   } catch (error) {
     // Same-layer duplicate of the chosen name, or a preview-era surface
     // change: degrade loudly instead of taking the whole plugin down.
-    console.error(`[modlens] ${preferred} registration skipped: ${error}`)
+    console.error(`[visionforge] ${preferred} registration skipped: ${error}`)
   }
 
-  // Image generation tools (modlens generate / edit): the same vision bridge
+  // Image generation tools (visionforge generate / edit): the same vision bridge
   // in reverse. Text-only models get an image OUTPUT path, not just an image
   // input one. The generated file is downloaded to disk (D:\VisionForge\out
   // by default, configurable via outputDir) and the tool returns the local
@@ -411,8 +411,8 @@ export function apply(ctx, config = {}) {
     name: toolName,
     description:
       mode === 'generate'
-        ? 'Generate an image from a text description through the modlens image bridge (Qwen-Image via qwen.apiKey, or GLM-Image via glm.apiKey). Requires at least one of these keys (run `npx @lr611/visionforge doctor`, or `modlens config set qwen.apiKey <key>`). Returns the saved local file path and a temporary URL. After success, copy the ENTIRE markdown block from the tool result (the [![生成的图片](图片URL)](本地预览地址) preview line plus the download line) verbatim into your final reply, and nothing else about the files: do not list the file paths as plain text and do not paste the provider URL anywhere. Clicking the preview must open the local preview address, never the provider URL. The result also carries a previewMarkdown field containing the ready preview+download markdown: reply with exactly that block as your final answer and nothing else about the files. EVERY call outputs exactly ONE image: never call this tool multiple times to offer the user "a choice of candidates" unless the user explicitly asked for N images. When the user asks for N images, call this tool N times and vary the prompt each time (e.g. append "variant 1/N: ...") so the results differ; never repeat the same prompt verbatim across calls.'
-        : 'Edit images from a text instruction through the modlens image bridge (Qwen-Image edit only; GLM-Image does not support editing). Requires the qwen.apiKey. Input accepts 1-3 absolute local file paths or http(s) URLs (multi-image fusion: e.g. merge two faces into one scene), or the string "auto" to use the images most recently pasted into the composer (up to 3). When the message carries pasted images and the user asks to fuse / edit / modify them (e.g. merge two photos, change an expression), call this tool with input:"auto" — the official reading model understands the request, this tool performs the edit through their provider keys. Set count to request multiple outputs (1-6). Returns the saved local file path(s) and temporary URL(s). After success, copy the ENTIRE markdown block from the tool result (one preview line per image: [![生成图 N](图片URL)](本地预览地址), plus the download lines) verbatim into your final reply, and nothing else about the files: do not list the file paths as plain text and do not paste the provider URLs anywhere. Clicking a preview must open its local preview address, never the provider URL. The result also carries a previewMarkdown field containing the ready preview+download markdown: reply with exactly that block as your final answer and nothing else about the files. NOTE: input:"auto" resolves the images modlens itself tracked from pasted composer content; images uploaded via DSH attachments/drag may not be tracked, so if auto edits the wrong image, locate the actual file (e.g. in the workspace) and pass its explicit path.',
+        ? 'Generate an image from a text description through the visionforge image bridge (Qwen-Image via qwen.apiKey, or GLM-Image via glm.apiKey). Requires at least one of these keys (run `npx @lr611/visionforge doctor`, or `visionforge config set qwen.apiKey <key>`). Returns the saved local file path and a temporary URL. After success, copy the ENTIRE markdown block from the tool result (the [![生成的图片](图片URL)](本地预览地址) preview line plus the download line) verbatim into your final reply, and nothing else about the files: do not list the file paths as plain text and do not paste the provider URL anywhere. Clicking the preview must open the local preview address, never the provider URL. The result also carries a previewMarkdown field containing the ready preview+download markdown: reply with exactly that block as your final answer and nothing else about the files. EVERY call outputs exactly ONE image: never call this tool multiple times to offer the user "a choice of candidates" unless the user explicitly asked for N images. When the user asks for N images, call this tool N times and vary the prompt each time (e.g. append "variant 1/N: ...") so the results differ; never repeat the same prompt verbatim across calls.'
+        : 'Edit images from a text instruction through the visionforge image bridge (Qwen-Image edit only; GLM-Image does not support editing). Requires the qwen.apiKey. Input accepts 1-3 absolute local file paths or http(s) URLs (multi-image fusion: e.g. merge two faces into one scene), or the string "auto" to use the images most recently pasted into the composer (up to 3). When the message carries pasted images and the user asks to fuse / edit / modify them (e.g. merge two photos, change an expression), call this tool with input:"auto" — the official reading model understands the request, this tool performs the edit through their provider keys. Set count to request multiple outputs (1-6). Returns the saved local file path(s) and temporary URL(s). After success, copy the ENTIRE markdown block from the tool result (one preview line per image: [![生成图 N](图片URL)](本地预览地址), plus the download lines) verbatim into your final reply, and nothing else about the files: do not list the file paths as plain text and do not paste the provider URLs anywhere. Clicking a preview must open its local preview address, never the provider URL. The result also carries a previewMarkdown field containing the ready preview+download markdown: reply with exactly that block as your final answer and nothing else about the files. NOTE: input:"auto" resolves the images visionforge itself tracked from pasted composer content; images uploaded via DSH attachments/drag may not be tracked, so if auto edits the wrong image, locate the actual file (e.g. in the workspace) and pass its explicit path.',
     parameters: {
       type: 'object',
       properties:
@@ -510,13 +510,13 @@ export function apply(ctx, config = {}) {
         cliArgs.push('--timeout', String(CLI_TIMEOUT_MS))
         const { stdout, stderr, code } = await run(process.execPath, cliArgs, undefined)
         if (code !== 0) {
-          throw new Error(`modlens ${mode} failed (exit ${code}): ${(stderr || stdout).trim().slice(0, 500)}`)
+          throw new Error(`visionforge ${mode} failed (exit ${code}): ${(stderr || stdout).trim().slice(0, 500)}`)
         }
         let parsed
         try {
           parsed = JSON.parse(stdout)
         } catch {
-          throw new Error(`modlens ${mode} produced no JSON: ${stdout.trim().slice(0, 300)}`)
+          throw new Error(`visionforge ${mode} produced no JSON: ${stdout.trim().slice(0, 300)}`)
         }
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) outputs.push(parsed)
       }
@@ -542,52 +542,52 @@ export function apply(ctx, config = {}) {
     },
   })
   try {
-    ctx.tools.register(imageGenTool(config.generateToolName || 'modlens_generate_image', 'generate'))
+    ctx.tools.register(imageGenTool(config.generateToolName || 'visionforge_generate_image', 'generate'))
   } catch (error) {
     // Same stance as readImageTool: a name collision or a preview-era surface
     // change degrades loudly without taking the rest of the plugin down.
-    console.error(`[modlens] generate tool registration skipped: ${error}`)
+    console.error(`[visionforge] generate tool registration skipped: ${error}`)
   }
   try {
-    ctx.tools.register(imageGenTool(config.editToolName || 'modlens_edit_image', 'edit'))
+    ctx.tools.register(imageGenTool(config.editToolName || 'visionforge_edit_image', 'edit'))
   } catch (error) {
-    console.error(`[modlens] edit tool registration skipped: ${error}`)
+    console.error(`[visionforge] edit tool registration skipped: ${error}`)
   }
   try {
     ctx.tools.register(downloadImageTool(config.downloadToolName))
   } catch (error) {
-    console.error(`[modlens] download tool registration skipped: ${error}`)
+    console.error(`[visionforge] download tool registration skipped: ${error}`)
   }
   try {
     ctx.tools.register(previewImageTool(config.previewToolName))
   } catch (error) {
-    console.error(`[modlens] preview tool registration skipped: ${error}`)
+    console.error(`[visionforge] preview tool registration skipped: ${error}`)
   }
   try {
     ctx.tools.register({
-      name: config.settingsToolName || 'modlens_open_settings',
-      description: 'Open the ModLens settings page in the browser. The page lets the user fill in their own provider API key(s) (comma-separated for automatic rotation), base URL, model, reading priority (official first vs plugin first), output directory, and paste behavior, then save locally. Call this whenever the user asks to configure modlens, open the settings, change/add an API key, change the base URL or model, or switch the reading priority.',
+      name: config.settingsToolName || 'visionforge_open_settings',
+      description: 'Open the VisionForge settings page in the browser. The page lets the user fill in their own provider API key(s) (comma-separated for automatic rotation), base URL, model, reading priority (official first vs plugin first), output directory, and paste behavior, then save locally. Call this whenever the user asks to configure visionforge, open the settings, change/add an API key, change the base URL or model, or switch the reading priority.',
       parameters: { type: 'object', properties: {}, required: [] },
       output: {
         schema: { type: 'object', properties: { ok: { type: 'boolean' }, url: { type: 'string' }, error: { type: 'string' } }, required: ['ok'] },
-        render: (_args, value) => [{ type: 'text', text: value?.ok ? `已打开 ModLens 设置页：${value.url}（在浏览器中填写并保存）` : `打开设置页失败：${value?.error ?? 'unknown'}` }],
+        render: (_args, value) => [{ type: 'text', text: value?.ok ? `已打开 VisionForge 设置页：${value.url}（在浏览器中填写并保存）` : `打开设置页失败：${value?.error ?? 'unknown'}` }],
       },
       timeoutMs: 30_000,
       isConcurrencySafe: () => true,
       async execute() {
         const port = await ensureSettingsServer()
-        if (!port) throw new Error('modlens settings server failed to start')
-        const url = `http://127.0.0.1:${port}/modlens/settings`
+        if (!port) throw new Error('visionforge settings server failed to start')
+        const url = `http://127.0.0.1:${port}/visionforge/settings`
         browserOpen(url)
         return { ok: true, url }
       },
     })
   } catch (error) {
-    console.error(`[modlens] settings tool registration skipped: ${error}`)
+    console.error(`[visionforge] settings tool registration skipped: ${error}`)
   }
 }
 
-// Output schema for the download tool (modlens download).
+// Output schema for the download tool (visionforge download).
 const IMAGE_DOWNLOAD_OUTPUT_SCHEMA = {
   type: 'object',
   properties: {
@@ -609,14 +609,14 @@ function renderDownload(value) {
 // it in Explorer with the file selected so the user sees exactly where it
 // landed. Default destination: D: drive root.
 function downloadImageTool(config = {}) {
-  const toolName = config.downloadToolName || 'modlens_download_image'
+  const toolName = config.downloadToolName || 'visionforge_download_image'
   return {
     name: toolName,
-    description: 'Save a modlens-generated image from the cache to a permanent location. Default destination is the D: drive root (e.g. D:\\photo.png); without a D: drive a VisionForge folder is created under the user home. Pass output to choose a different file path or directory. After saving, opens Explorer with the file selected and returns a clickable locate link.',
+    description: 'Save a visionforge-generated image from the cache to a permanent location. Default destination is the D: drive root (e.g. D:\\photo.png); without a D: drive a VisionForge folder is created under the user home. Pass output to choose a different file path or directory. After saving, opens Explorer with the file selected and returns a clickable locate link.',
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Absolute local path of the generated image (the filePath returned by modlens_generate_image or modlens_edit_image)' },
+        path: { type: 'string', description: 'Absolute local path of the generated image (the filePath returned by visionforge_generate_image or visionforge_edit_image)' },
         output: { type: 'string', description: 'Optional destination file path, or a directory to save into (default: D: drive root)' },
       },
       required: ['path'],
@@ -665,7 +665,7 @@ function downloadImageTool(config = {}) {
       // Name collision: append a timestamp before the extension.
       if (dest !== src && existsSync(dest)) {
         const ts = new Date().toISOString().replace(/[:.]/g, '-')
-        const stem = base.slice(0, base.length - ext.length) || 'modlens'
+        const stem = base.slice(0, base.length - ext.length) || 'visionforge'
         dest = join(dirname(dest), `${stem}-${ts}${ext}`)
       }
       const parent2 = dirname(dest)
@@ -688,7 +688,7 @@ function downloadImageTool(config = {}) {
   }
 }
 
-// Output schema for the preview tool (modlens preview).
+// Output schema for the preview tool (visionforge preview).
 const IMAGE_PREVIEW_OUTPUT_SCHEMA = {
   type: 'object',
   properties: {
@@ -708,7 +708,7 @@ function renderPreview(value) {
 
 // Local loopback download server for in-conversation "save" links. The DSH
 // markdown renderer shows http(s) links, so the generated-image result line
-// carries 保存图片 to http://127.0.0.1:<port>/modlens/download?path=<file>.
+// carries 保存图片 to http://127.0.0.1:<port>/visionforge/download?path=<file>.
 // Clicking it makes the browser save the file (system download dialog; the
 // target folder is whatever the browser/user chooses). Only files inside the
 // configured output dir are ever served.
@@ -720,7 +720,7 @@ let downloadServer = null
 // itself has been observed holding that port, which used to force a random
 // ephemeral fallback and break every older image URL on the next restart.
 const LOOPBACK_PORT_CANDIDATES = [45999, 46999, 47999, 48999]
-// Files modlens itself generated (CLI output paths) that may live outside
+// Files visionforge itself generated (CLI output paths) that may live outside
 // the configured output dir. Serving them is safe because only our own
 // successful generations are registered, and the loopback routes still
 // require an existing regular file. Cleared on restart with the server.
@@ -742,10 +742,10 @@ function ensureDownloadServer(config = {}) {
           return
         }
         const url = new URL(req.url ?? '/', 'http://127.0.0.1')
-        const isImage = url.pathname === '/modlens/image'
-        const isDownload = url.pathname === '/modlens/download'
-        const isOpen = url.pathname === '/modlens/open'
-        const isDownloadLocal = url.pathname === '/modlens/download-local'
+        const isImage = url.pathname === '/visionforge/image'
+        const isDownload = url.pathname === '/visionforge/download'
+        const isOpen = url.pathname === '/visionforge/open'
+        const isDownloadLocal = url.pathname === '/visionforge/download-local'
         if (!isImage && !isDownload && !isOpen && !isDownloadLocal) {
           res.writeHead(404).end('not found')
           return
@@ -780,7 +780,7 @@ function ensureDownloadServer(config = {}) {
           let dest = join(dRoot, base)
           if (dest !== file && existsSync(dest)) {
             const ts = new Date().toISOString().replace(/[:.]/g, '-')
-            const stem = base.slice(0, base.length - ext.length) || 'modlens'
+            const stem = base.slice(0, base.length - ext.length) || 'visionforge'
             dest = join(dirname(dest), `${stem}-${ts}${ext}`)
           }
           const parent = dirname(dest)
@@ -807,7 +807,7 @@ function ensureDownloadServer(config = {}) {
           : ext === '.webp' ? 'image/webp'
           : ext === '.gif' ? 'image/gif'
           : 'application/octet-stream'
-        // /modlens/image renders the local file (no attachment header), so a
+        // /visionforge/image renders the local file (no attachment header), so a
         // browser opens it as a picture instead of downloading it. The OSS
         // provider URL often carries a download/attachment header and a 24h
         // expiry, which is why preview links point here rather than at it.
@@ -834,7 +834,7 @@ function ensureDownloadServer(config = {}) {
         // re-derive the flag from the raw request URL instead.
         try {
           const rawUrl = (req.url && String(req.url)) || ''
-          if (rawUrl.includes('/modlens/download-local')) {
+          if (rawUrl.includes('/visionforge/download-local')) {
             mkdirSync(outDir, { recursive: true })
             appendFileSync(join(outDir, 'save-debug.log'),
               `${new Date().toISOString()} url=${rawUrl} err=${(err && err.stack) || err}\n`)
@@ -885,10 +885,10 @@ function ensureDownloadServer(config = {}) {
   }
 }
 
-// The standalone ModLens settings page: a browser card where the user fills
+// The standalone VisionForge settings page: a browser card where the user fills
 // in their own keys/endpoint/model/priority/output dir. New DSH versions
 // removed the plugin settings-card slot, so this page is served by its own
-// loopback server and opened from the chat via the modlens_open_settings tool.
+// loopback server and opened from the chat via the visionforge_open_settings tool.
 let settingsPort = 0
 let settingsServer = null
 
@@ -903,14 +903,14 @@ function ensureSettingsServer() {
         }
         try {
           const url = new URL(req.url ?? '/', 'http://127.0.0.1')
-          if (url.pathname === '/modlens/settings' && req.method === 'GET') {
+          if (url.pathname === '/visionforge/settings' && req.method === 'GET') {
             res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
             res.end(settingsPageHtml())
             return
           }
-          if (url.pathname === '/modlens/settings/api' && req.method === 'GET') {
+          if (url.pathname === '/visionforge/settings/api' && req.method === 'GET') {
             let config = {}
-            try { config = readModlensConfig() } catch { config = {} }
+            try { config = readvisionforgeConfig() } catch { config = {} }
             const providers = config.providers ?? {}
             const current = config.provider !== undefined && ENGINES.includes(config.provider) ? config.provider : (providers.qwen ? 'qwen' : 'qwen')
             const engines = {}
@@ -940,7 +940,7 @@ function ensureSettingsServer() {
             })
             return
           }
-          if (url.pathname === '/modlens/settings' && req.method === 'POST') {
+          if (url.pathname === '/visionforge/settings' && req.method === 'POST') {
             const chunks = []
             let total = 0
             ;(async () => {
@@ -991,7 +991,7 @@ function settingsPageHtml() {
 <html lang="zh-CN">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ModLens 视觉引擎设置</title>
+<title>VisionForge 视觉引擎设置</title>
 <style>
   :root { color-scheme: light dark }
   body { font-family: system-ui, -apple-system, sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; color: #222 }
@@ -1009,7 +1009,7 @@ function settingsPageHtml() {
   .hidden { display: none }
 </style>
 <h1>VisionForge 视觉引擎设置</h1>
-<div class="sub">视觉理解 + 图片生成。配置由你自己填写，保存在本地（~/.modlens/config.json），不会上传</div>
+<div class="sub">视觉理解 + 图片生成。配置由你自己填写，保存在本地（~/.visionforge/config.json），不会上传</div>
 <div class="card">
   <label>引擎（提供方）</label>
   <select id="engine"></select>
@@ -1080,7 +1080,7 @@ function settingsPageHtml() {
   }
   ;(async function () {
     try {
-      var r = await fetch('/modlens/settings/api')
+      var r = await fetch('/visionforge/settings/api')
       DATA = await r.json()
       var sel = document.getElementById('engine')
       sel.innerHTML = ''
@@ -1122,12 +1122,12 @@ function settingsPageHtml() {
         pasteToPath: document.getElementById('pasteToPath').value === 'true'
       }
       if (keyVal !== '' && keyVal !== '••••••') body.apiKey = keyVal
-      var r = await fetch('/modlens/settings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+      var r = await fetch('/visionforge/settings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
       var j = await r.json()
       if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status))
       msg.textContent = '✓ 已保存'; msg.className = 'ok'
       document.getElementById('apiKey').value = ''
-      DATA = await (await fetch('/modlens/settings/api')).json()
+      DATA = await (await fetch('/visionforge/settings/api')).json()
       renderEngine(engineId)
     } catch (e) { msg.textContent = '保存失败：' + e.message; msg.className = 'err' }
     b.disabled = false
@@ -1136,7 +1136,7 @@ function settingsPageHtml() {
 `;
 }// Resolve the image output dir the CLI uses (config.outputDir, else D:\VisionForge\out on Windows).
 function outputDirOf(config) {
-  const shared = (() => { try { return readModlensConfig() } catch { return {} } })()
+  const shared = (() => { try { return readvisionforgeConfig() } catch { return {} } })()
   const fromShared = shared?.outputDir
   if (typeof fromShared === 'string' && fromShared.trim() !== '') return fromShared
   const fromPlugin = config?.outputDir
@@ -1163,14 +1163,14 @@ function browserOpen(targetPath) {
 // folder, e.g. the D: drive). The call card also carries the path as a
 // location, so the file is clickable right in the conversation.
 function previewImageTool(config = {}) {
-  const toolName = config.previewToolName || 'modlens_preview_image'
+  const toolName = config.previewToolName || 'visionforge_preview_image'
   return {
     name: toolName,
-    description: 'Open a modlens-generated image in the system default image viewer for preview and zooming, before deciding whether to download it. Takes the absolute local path of the generated image (the filePath returned by modlens_generate_image or modlens_edit_image). Does not move or delete the file.',
+    description: 'Open a visionforge-generated image in the system default image viewer for preview and zooming, before deciding whether to download it. Takes the absolute local path of the generated image (the filePath returned by visionforge_generate_image or visionforge_edit_image). Does not move or delete the file.',
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Absolute local path of the image to preview (the filePath returned by modlens_generate_image or modlens_edit_image)' },
+        path: { type: 'string', description: 'Absolute local path of the image to preview (the filePath returned by visionforge_generate_image or visionforge_edit_image)' },
       },
       required: ['path'],
     },
@@ -1199,7 +1199,7 @@ function previewImageTool(config = {}) {
       // of downloading it, and it follows the OS default for http links.
       const previewUrl =
         downloadServerPort > 0
-          ? `http://127.0.0.1:${downloadServerPort}/modlens/image?path=${encodeURIComponent(target)}`
+          ? `http://127.0.0.1:${downloadServerPort}/visionforge/image?path=${encodeURIComponent(target)}`
           : target
       const opened = browserOpen(previewUrl)
       return {
@@ -1281,17 +1281,17 @@ const PASTE_MAX_BYTES = 25 * 1024 * 1024
  * text-only model merely keeps its old error message.
  */
 // The provider ids registerVisionProvider mints: the legacy deepseek wrap and
-// the `modlens-<upstream>` form auto-discovery uses. A sibling instance of
+// the `visionforge-<upstream>` form auto-discovery uses. A sibling instance of
 // this plugin derives its ids the same way, which is what makes the pair of
 // checks below meaningful. A custom `config.providerId` is outside the
 // convention on purpose and is covered by the registered-id set instead.
-const OWN_PROVIDER_ID = /^(deepseek-modlens$|modlens-)/
+const OWN_PROVIDER_ID = /^(deepseek-visionforge$|visionforge-)/
 
 async function pasteTakeoverVerdict(host, label, ownProviders) {
   if (typeof label !== 'string' || label.trim() === '') return false
   // Our own wrappers convert pastes at request time with the thumbnail
   // preserved; taking their paste over would defeat the better path.
-  if (/\(modlens vision\)/i.test(label)) return false
+  if (/\(visionforge vision\)/i.test(label)) return false
   const llm = host.llm
   if (!llm || typeof llm.listProviders !== 'function' || typeof llm.listModels !== 'function') {
     return false
@@ -1327,7 +1327,7 @@ async function pasteTakeoverVerdict(host, label, ownProviders) {
       if (
         OWN_PROVIDER_ID.test(providerId) &&
         typeof model?.name === 'string' &&
-        /\(modlens vision\)/i.test(model.name)
+        /\(visionforge vision\)/i.test(model.name)
       ) {
         continue
       }
@@ -1359,9 +1359,9 @@ const PASTE_VERDICT_TTL_MS = 15_000
 const PASTE_VERDICT_CAP = 32
 
 /**
- * The paste route. POST /modlens/paste: image bytes in, `{ path }` out; the
+ * The paste route. POST /visionforge/paste: image bytes in, `{ path }` out; the
  * file is private (0600) in a fresh unpredictable temp dir, magic-byte
- * checked and size-capped. GET /modlens/paste?model=<selector label>:
+ * checked and size-capped. GET /visionforge/paste?model=<selector label>:
  * `{ takeover }`: the browser half asks before ever touching a paste, so a
  * disabled route (pasteToPath: false, or no web profile) means the client
  * stands down instead of swallowing pastes into a 404. Bound to the dsh web
@@ -1392,11 +1392,11 @@ function registerPasteRoute(ctx, host, ownProviders, config = {}) {
     })
   }
   ctx.webServer.register({
-    name: 'modlens-paste',
+    name: 'visionforge-paste',
     kind: 'exact',
-    path: '/modlens/paste',
+    path: '/visionforge/paste',
     handler: async (req, res) => {
-      // Same fence as /modlens/config, for the same reason: a page on this
+      // Same fence as /visionforge/config, for the same reason: a page on this
       // machine, or one rebound onto loopback, must not be able to plant a
       // file here or read back what the takeover verdict discloses.
       if (!isTrustedRequest(req)) {
@@ -1408,7 +1408,7 @@ function registerPasteRoute(ctx, host, ownProviders, config = {}) {
         try {
           const label = new URL(req.url, 'http://localhost').searchParams.get('model') ?? ''
           const pasteOff = config.pasteToPath === false || (() => {
-            try { return readModlensConfig()?.pasteToPath === false } catch { return false }
+            try { return readvisionforgeConfig()?.pasteToPath === false } catch { return false }
           })()
           if (pasteOff) {
             res.writeHead(200, { 'content-type': 'application/json' })
@@ -1426,10 +1426,10 @@ function registerPasteRoute(ctx, host, ownProviders, config = {}) {
           // (the model sees the image either way). Text-only models are the
           // takeover targets; 'official' keeps the model-capability verdict.
           const sharedPriority = (() => {
-            try { return readModlensConfig()?.visionPriority } catch { return undefined }
+            try { return readvisionforgeConfig()?.visionPriority } catch { return undefined }
           })()
           const modelKeepsThumbnail =
-            /\(modlens vision\)/i.test(label) || /vision|multimodal|vl|image|omni/i.test(label)
+            /\(visionforge vision\)/i.test(label) || /vision|multimodal|vl|image|omni/i.test(label)
           const forcedPlugin = sharedPriority === 'plugin' && !modelKeepsThumbnail
           if (forcedPlugin) {
             // 'plugin' still defers to real capability: a model that truly
@@ -1524,7 +1524,7 @@ function registerPasteRoute(ctx, host, ownProviders, config = {}) {
             path: file,
             previewUrl:
               downloadServerPort > 0
-                ? `http://127.0.0.1:${downloadServerPort}/modlens/image?path=${encodeURIComponent(file)}`
+                ? `http://127.0.0.1:${downloadServerPort}/visionforge/image?path=${encodeURIComponent(file)}`
                 : null,
           }),
         )
@@ -1551,20 +1551,20 @@ function registerPasteRoute(ctx, host, ownProviders, config = {}) {
  * Two modes (issue #29, design contributed by @zlycode01):
  * - `config.upstream` set: wrap exactly that one route, legacy behavior.
  * - unset: auto-discovery — every registered provider route carrying
- *   wrappable text-only family models gets its own `modlens-<provider>`
+ *   wrappable text-only family models gets its own `visionforge-<provider>`
  *   wrapper, so a machine with several subscription packages (opencode-go,
  *   zai, ...) wraps them all instead of hand-picking one. A `discover` array
  *   of provider ids narrows the set. Routes that register late (llm-pi-ai
  *   mounts its routes after settings load) are picked up by re-sweeping on
  *   the registry's own `llm/adapters-updated` notification, no polling. The
- *   deepseek-official wrap keeps its historical `deepseek-modlens` id, so a
+ *   deepseek-official wrap keeps its historical `deepseek-visionforge` id, so a
  *   selector remembering that provider survives the upgrade.
  */
 /**
  * Whether this wrapper id proves, by itself, which upstream produced the
  * turns recorded under it.
  *
- * Auto-discovery mints `modlens-<upstream>` (and `deepseek-modlens` for
+ * Auto-discovery mints `visionforge-<upstream>` (and `deepseek-visionforge` for
  * `deepseek-official`), so the id carries its own provenance and cannot drift.
  * A hand-configured `upstream` under some other id can be repointed between
  * runs, and then history recorded under that id was produced by a provider
@@ -1574,7 +1574,7 @@ function registerPasteRoute(ctx, host, ownProviders, config = {}) {
  * behaviour they have today rather than gaining a worse one.
  */
 function wrapperIdEncodes(wrapperId, upstream) {
-  return wrapperId === `modlens-${upstream}` || (wrapperId === 'deepseek-modlens' && upstream === 'deepseek-official')
+  return wrapperId === `visionforge-${upstream}` || (wrapperId === 'deepseek-visionforge' && upstream === 'deepseek-official')
 }
 
 /**
@@ -1700,7 +1700,7 @@ function registerVisionProvider(ctx, config, ownProviders, evidenceCache) {
   // replacement can refresh those snapshots instead of leaving a synthetic
   // route on yesterday's name or recovery policy.
   const registrations = new Map()
-  const wrapped = new Set(['deepseek-modlens'])
+  const wrapped = new Set(['deepseek-visionforge'])
   const policyKey = (policy) => (policy === undefined ? undefined : JSON.stringify(policy))
 
   const registerWrapper = (upstream, providerId, displayName) => {
@@ -1740,7 +1740,7 @@ function registerVisionProvider(ctx, config, ownProviders, evidenceCache) {
           const models = await llm.listModels(upstream, signal)
           return models.filter(shouldWrap).map((model) => ({
             ...withVision(model),
-            name: `${model.name ?? model.id} (modlens vision)`,
+            name: `${model.name ?? model.id} (visionforge vision)`,
           }))
         },
         async resolveModel(_provider, model, signal) {
@@ -1760,8 +1760,8 @@ function registerVisionProvider(ctx, config, ownProviders, evidenceCache) {
             const declaresImage = Array.isArray(info?.inputModalities) && info.inputModalities.includes('image')
             throw new Error(
               declaresImage
-                ? `model "${model}" declares native image input, so its "(modlens vision)" entry no longer applies. Select the same model from the provider group without "(modlens vision)".`
-                : `model "${model}" is outside the modlens vision wrap scope`,
+                ? `model "${model}" declares native image input, so its "(visionforge vision)" entry no longer applies. Select the same model from the provider group without "(visionforge vision)".`
+                : `model "${model}" is outside the visionforge vision wrap scope`,
             )
           }
           return { ...withVision(info), id: model }
@@ -1815,13 +1815,13 @@ function registerVisionProvider(ctx, config, ownProviders, evidenceCache) {
         error?.code === 'DUPLICATE_ADAPTER' ||
         /\balready registered\b|\bduplicate (adapter|provider)\b/i.test(String(error))
       if (duplicate) {
-        console.error(`[modlens] vision provider ${providerId} already registered, keeping the existing one`)
+        console.error(`[visionforge] vision provider ${providerId} already registered, keeping the existing one`)
         return true
       }
       // A preview-era surface change: degrade to the tool-only plugin,
       // but say so in the harness log instead of vanishing (a swallowed
       // TypeError here once hid a missing base method).
-      console.error(`[modlens] vision provider registration skipped (${providerId}): ${error}`)
+      console.error(`[visionforge] vision provider registration skipped (${providerId}): ${error}`)
       return false
     }
   }
@@ -1862,7 +1862,7 @@ function registerVisionProvider(ctx, config, ownProviders, evidenceCache) {
         typeof llm.providerRetryPolicy === 'function' ? policyKey(llm.providerRetryPolicy(upstream)) : undefined
     } catch (error) {
       dropWrapper(upstream, current)
-      console.error(`[modlens] vision provider refresh removed (${current.providerId}): ${error}`)
+      console.error(`[visionforge] vision provider refresh removed (${current.providerId}): ${error}`)
       return
     }
     if (current.state.displayName === displayName && current.state.retryPolicyKey === nextPolicyKey) return
@@ -1879,12 +1879,12 @@ function registerVisionProvider(ctx, config, ownProviders, evidenceCache) {
         // listener), or the host kept the old snapshot. Either converges on
         // the next refresh; disposing would not.
         console.error(
-          `[modlens] vision provider refresh failed (${current.providerId}), keeping the existing registration: ${error}`,
+          `[visionforge] vision provider refresh failed (${current.providerId}), keeping the existing registration: ${error}`,
         )
         return
       }
       dropWrapper(upstream, current)
-      console.error(`[modlens] vision provider refresh failed (${current.providerId}): ${error}`)
+      console.error(`[visionforge] vision provider refresh failed (${current.providerId}): ${error}`)
     }
   }
 
@@ -1892,7 +1892,7 @@ function registerVisionProvider(ctx, config, ownProviders, evidenceCache) {
     const upstream = config.upstream
     // The default id encodes its upstream, the same minting rule the sweep
     // uses, because #49's relabelling trusts only ids that prove their
-    // upstream. The old flat default, deepseek-modlens for every pinned
+    // upstream. The old flat default, deepseek-visionforge for every pinned
     // upstream, was also the id auto-discovery mints for deepseek-official,
     // so history recorded under a pinned foreign upstream became
     // indistinguishable from DeepSeek history, and switching to
@@ -1900,7 +1900,7 @@ function registerVisionProvider(ctx, config, ownProviders, evidenceCache) {
     // adapter. An explicit config.providerId is honoured as before, and a
     // pinned deepseek-official keeps the name existing setups know.
     const providerId =
-      config.providerId || (upstream === 'deepseek-official' ? 'deepseek-modlens' : `modlens-${upstream}`)
+      config.providerId || (upstream === 'deepseek-official' ? 'deepseek-visionforge' : `visionforge-${upstream}`)
     // Named after the route it actually wraps. This used to say DeepSeek
     // whatever `upstream` was, so anyone pointing it at another route got a
     // model group labelled for a provider they were not using. The refresh
@@ -1918,7 +1918,7 @@ function registerVisionProvider(ctx, config, ownProviders, evidenceCache) {
     let reconciling = false
     let rerunQueued = false
     let waitingLogged = false
-    // The id is held by someone else (a second modlens install, most
+    // The id is held by someone else (a second visionforge install, most
     // likely). Their registration answers the routing, so retrying ours on
     // every topology event would only repeat the same log line; the claim is
     // re-examined when the holder's route disappears.
@@ -1957,12 +1957,12 @@ function registerVisionProvider(ctx, config, ownProviders, evidenceCache) {
             // breadcrumb naming exactly what was waited on.
             if (!waitingLogged) {
               waitingLogged = true
-              console.error(`[modlens] vision provider waiting for upstream "${upstream}" to register`)
+              console.error(`[visionforge] vision provider waiting for upstream "${upstream}" to register`)
             }
             return
           }
           waitingLogged = false
-          if (registerWrapper(upstream, providerId, `${upstreamName()} (modlens vision)`)) {
+          if (registerWrapper(upstream, providerId, `${upstreamName()} (visionforge vision)`)) {
             // True with nothing recorded is the duplicate branch: another
             // holder already answers for this id.
             claimedElsewhere = !registrations.has(upstream)
@@ -1973,7 +1973,7 @@ function registerVisionProvider(ctx, config, ownProviders, evidenceCache) {
           dropWrapper(upstream, current)
           return
         }
-        refreshWrapper(upstream, `${upstreamName()} (modlens vision)`)
+        refreshWrapper(upstream, `${upstreamName()} (visionforge vision)`)
       } finally {
         reconciling = false
         if (rerunQueued) {
@@ -2003,7 +2003,7 @@ function registerVisionProvider(ctx, config, ownProviders, evidenceCache) {
       if (!active) return
       // A sweep failure must never become an unhandled rejection inside the
       // host process; the next topology notification simply tries again.
-      console.error(`[modlens] vision provider discovery sweep failed: ${error}`)
+      console.error(`[visionforge] vision provider discovery sweep failed: ${error}`)
     }
   }
   const sweepBody = async () => {
@@ -2012,7 +2012,7 @@ function registerVisionProvider(ctx, config, ownProviders, evidenceCache) {
       // Older registry surface: fall back to the single legacy wrap once.
       if (!wrapped.has('__legacy_fallback__')) {
         wrapped.add('__legacy_fallback__')
-        registerWrapper('deepseek-official', 'deepseek-modlens', 'DeepSeek (modlens vision)')
+        registerWrapper('deepseek-official', 'deepseek-visionforge', 'DeepSeek (visionforge vision)')
       }
       return
     }
@@ -2029,11 +2029,11 @@ function registerVisionProvider(ctx, config, ownProviders, evidenceCache) {
     for (const info of providers) {
       if (!active) return
       const id = idOf(info)
-      if (!id || String(id).startsWith('modlens-')) continue
+      if (!id || String(id).startsWith('visionforge-')) continue
       if (discover && !discover.has(id)) continue
       const base = (typeof info === 'string' ? undefined : info.name) ?? id
       if (registrations.has(id)) {
-        refreshWrapper(id, `${base} (modlens vision)`)
+        refreshWrapper(id, `${base} (visionforge vision)`)
         continue
       }
       if (wrapped.has(id)) continue
@@ -2060,8 +2060,8 @@ function registerVisionProvider(ctx, config, ownProviders, evidenceCache) {
         wrapped.delete(id)
         continue
       }
-      const providerId = id === 'deepseek-official' ? 'deepseek-modlens' : `modlens-${id}`
-      if (!registerWrapper(id, providerId, `${base} (modlens vision)`)) {
+      const providerId = id === 'deepseek-official' ? 'deepseek-visionforge' : `visionforge-${id}`
+      if (!registerWrapper(id, providerId, `${base} (visionforge vision)`)) {
         wrapped.delete(id)
       }
     }
@@ -2336,7 +2336,7 @@ async function convertImagesToEvidence(ctx, messages, signal, adapter) {
 /**
  * Phase 2: paste auto-route. When entered messages carry image blocks (the
  * Web UI's paste/drop intake) and the model behind dsh is text-only, rewrite
- * each image block into a modlens evidence text block before the step starts.
+ * each image block into a visionforge evidence text block before the step starts.
  * Runs after `next()` so downstream pre-step listeners (compaction, context
  * injectors) see and shape the same final message set; a failed read degrades
  * to an explanatory text block instead of rejecting the step.
@@ -2426,10 +2426,10 @@ async function readImageBlock(ctx, block, signal) {
       throw new Error(`unsupported pasted media type ${mediaType ?? '(none declared)'}`)
     }
     stage = 'engine'
-    dir = await mkdtemp(join(tmpdir(), 'modlens-dsh-'))
+    dir = await mkdtemp(join(tmpdir(), 'visionforge-dsh-'))
     const file = join(dir, `paste${ext}`)
     await writeFile(file, Buffer.from(stored.data), { mode: 0o600 })
-    const cli = process.env.MODLENS_DSH_CLI || CLI_PATH
+    const cli = process.env.VISIONFORGE_DSH_CLI || CLI_PATH
     const { stdout, stderr, code } = await run(
       process.execPath,
       [cli, '-i', file, '--timeout', String(CLI_TIMEOUT_MS)],
@@ -2445,12 +2445,12 @@ async function readImageBlock(ctx, block, signal) {
       // downstream listener mutating it would silently rewrite history.
       block: Object.freeze({
         type: 'text',
-        text: `[Pasted image, read by the modlens vision bridge]\n${renderEvidence(parsed.result)}`,
+        text: `[Pasted image, read by the visionforge vision bridge]\n${renderEvidence(parsed.result)}`,
       }),
     }
   } catch (error) {
     const detail = error instanceof Error ? error.message.slice(0, 300) : String(error)
-    console.error(`[modlens] image read failed (${stage}): ${detail}`)
+    console.error(`[visionforge] image read failed (${stage}): ${detail}`)
     return {
       ok: false,
       block: Object.freeze({
@@ -2527,7 +2527,7 @@ function buildImageMarkdown(value) {
     const fp = files[i]
     const local =
       downloadServerPort > 0 && typeof fp === 'string'
-        ? `http://127.0.0.1:${downloadServerPort}/modlens/image?path=${encodeURIComponent(fp)}`
+        ? `http://127.0.0.1:${downloadServerPort}/visionforge/image?path=${encodeURIComponent(fp)}`
         : null
     // Inline thumbnail: serve from the local loopback route (renders without
     // a download header), so the picture is visible right in the chat and
@@ -2539,8 +2539,8 @@ function buildImageMarkdown(value) {
     // Compact one-line layout: small in-chat thumbnail, then zoom and
     // download links right next to it (the thumbnail is scaled down by the
     // injected global CSS; hovering zooms it in place).
-    const zoom = local ? ` [🔍 放大](http://127.0.0.1:${downloadServerPort}/modlens/image?path=${encodeURIComponent(fp)})` : ''
-    const dl = downloadServerPort > 0 && typeof fp === 'string' ? ` [下载](http://127.0.0.1:${downloadServerPort}/modlens/download?path=${encodeURIComponent(fp)})` : ''
+    const zoom = local ? ` [🔍 放大](http://127.0.0.1:${downloadServerPort}/visionforge/image?path=${encodeURIComponent(fp)})` : ''
+    const dl = downloadServerPort > 0 && typeof fp === 'string' ? ` [下载](http://127.0.0.1:${downloadServerPort}/visionforge/download?path=${encodeURIComponent(fp)})` : ''
     lines.push(`![生成图 ${i + 1}](${thumb})${zoom}${dl}`)
   })
   return lines.join('\n')
@@ -2560,13 +2560,13 @@ function renderImageGen(value) {
     const fp = files[i]
     const local =
       downloadServerPort > 0 && typeof fp === 'string'
-        ? `http://127.0.0.1:${downloadServerPort}/modlens/image?path=${encodeURIComponent(fp)}`
+        ? `http://127.0.0.1:${downloadServerPort}/visionforge/image?path=${encodeURIComponent(fp)}`
         : null
     // Inline preview served from the local loopback route (renders without a
     // download header) so the picture shows inside the chat regardless of the
     // external OSS URL's availability/headers.
     const thumb = local ?? u
-    const zoom = local ? ` [🔍 放大](http://127.0.0.1:${downloadServerPort}/modlens/image?path=${encodeURIComponent(fp)})` : ''
+    const zoom = local ? ` [🔍 放大](http://127.0.0.1:${downloadServerPort}/visionforge/image?path=${encodeURIComponent(fp)})` : ''
     lines.push(`![生成图 ${i + 1}](${thumb})${zoom}`)
   })
   // Independent, obvious download buttons (click → save dialog, user picks location).
@@ -2574,7 +2574,7 @@ function renderImageGen(value) {
     lines.push('')
     files.forEach((fp, i) => {
       if (typeof fp === 'string') {
-        lines.push(`[下载图片 ${i + 1}](http://127.0.0.1:${downloadServerPort}/modlens/download?path=${encodeURIComponent(fp)})`)
+        lines.push(`[下载图片 ${i + 1}](http://127.0.0.1:${downloadServerPort}/visionforge/download?path=${encodeURIComponent(fp)})`)
       }
     })
   }
@@ -2587,15 +2587,15 @@ function renderImageGen(value) {
 }
 
 // The engines a user can pick in the settings card, in the order the docs
-// introduce them. Kept to the names modlens itself uses so the card and
-// `modlens doctor` say the same words.
+// introduce them. Kept to the names visionforge itself uses so the card and
+// `visionforge doctor` say the same words.
 const ENGINES = ['antigravity-cli', 'gemini-api', 'openai', 'qwen', 'anthropic', 'claude-cli', 'kimi-cli']
 // The two CLI engines sign in through their own tool, so a key or an endpoint
 // would be a field with nothing behind it. Both still take a model.
 const KEYLESS_ENGINES = ['antigravity-cli', 'claude-cli', 'kimi-cli']
 // Display metadata for the settings page: label, default endpoint, and the
 // common model list offered in the dropdown (a "custom" option lets the user
-// type anything else). Kept in sync with what modlens itself understands.
+// type anything else). Kept in sync with what visionforge itself understands.
 const ENGINE_META = {
   qwen: {
     label: '千问（Qwen）',
@@ -2660,7 +2660,7 @@ const REUSE_HARNESSES = ['claude', 'codex', 'opencode', 'pi', 'grok']
 const ENGINE_ENV_BINDINGS = {
   'gemini-api': { apiKey: 'GEMINI_API_KEY', baseUrl: 'GEMINI_BASE_URL' },
   openai: { apiKey: 'OPENAI_API_KEY', baseUrl: 'OPENAI_BASE_URL' },
-  qwen: { apiKey: 'MODLENS_QWEN_API_KEY', baseUrl: 'MODLENS_QWEN_BASE_URL' },
+  qwen: { apiKey: 'VISIONFORGE_QWEN_API_KEY', baseUrl: 'VISIONFORGE_QWEN_BASE_URL' },
   anthropic: { apiKey: 'ANTHROPIC_API_KEY', baseUrl: 'ANTHROPIC_BASE_URL' },
 }
 
@@ -2693,9 +2693,9 @@ function engineConfiguredInFile(engine, config) {
   return settingsKeysFor(engine).some((key) => config.providers?.[key] !== undefined)
 }
 
-/** ~/.modlens/config.json, the one file every harness shares. */
-function modlensConfigPath() {
-  return join(homedir(), '.modlens', 'config.json')
+/** ~/.visionforge/config.json, the one file every harness shares. */
+function visionforgeConfigPath() {
+  return join(homedir(), '.visionforge', 'config.json')
 }
 
 /**
@@ -2707,9 +2707,9 @@ function modlensConfigPath() {
  */
 function ensureConfigDefaults() {
   try {
-    const file = modlensConfigPath()
+    const file = visionforgeConfigPath()
     if (!existsSync(file)) return
-    const config = readModlensConfig()
+    const config = readvisionforgeConfig()
     if (typeof config.outputDir === 'string' && config.outputDir.trim() !== '') return
     const def = process.platform === 'win32' ? 'D:\\VisionForge\\out' : join(homedir(), '.visionforge', 'out')
     config.outputDir = def
@@ -2731,22 +2731,22 @@ function ensureConfigDefaults() {
  * and a settings card that treated it as empty would overwrite it on the next
  * save. The card shows the error instead.
  */
-function readModlensConfig() {
+function readvisionforgeConfig() {
   let raw
   try {
-    raw = readFileSync(modlensConfigPath(), 'utf8')
+    raw = readFileSync(visionforgeConfigPath(), 'utf8')
   } catch (error) {
     if (error?.code === 'ENOENT') return {}
-    throw new Error(`cannot read ${modlensConfigPath()}: ${error?.message ?? error}`)
+    throw new Error(`cannot read ${visionforgeConfigPath()}: ${error?.message ?? error}`)
   }
   let parsed
   try {
     parsed = JSON.parse(raw)
   } catch (error) {
-    throw new Error(`${modlensConfigPath()} is not valid JSON: ${error?.message ?? error}`)
+    throw new Error(`${visionforgeConfigPath()} is not valid JSON: ${error?.message ?? error}`)
   }
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`${modlensConfigPath()} does not hold a JSON object`)
+    throw new Error(`${visionforgeConfigPath()} does not hold a JSON object`)
   }
   return parsed
 }
@@ -2757,7 +2757,7 @@ function readModlensConfig() {
  * the browser: both can carry credentials, and a browser that cannot read a
  * secret cannot leak one or write it back accidentally.
  */
-function engineSummary(config = readModlensConfig()) {
+function engineSummary(config = readvisionforgeConfig()) {
   const engines = {}
   for (const name of ENGINES) {
     // One source, whole. The file when it names the engine, its variables
@@ -2810,7 +2810,7 @@ function engineSummary(config = readModlensConfig()) {
  * to clear one by submitting the blank field it was shown.
  */
 function applyEngineSettings(patch) {
-  const config = readModlensConfig()
+  const config = readvisionforgeConfig()
   // The pin moves only when the card says it moved. A save that carried the
   // currently displayed engine regardless turned "not pinned" into a pin on
   // whatever happened to be shown, changing which engine reads every later
@@ -2924,7 +2924,7 @@ function applyEngineSettings(patch) {
   if (patch?.pasteToPath !== undefined && typeof patch.pasteToPath === 'boolean') {
     config.pasteToPath = patch.pasteToPath
   }
-  const file = modlensConfigPath()
+  const file = visionforgeConfigPath()
   // A symlink here would write through to wherever it points, so it is
   // refused rather than followed: the CLI writes a real file, and anything
   // else is a setup this card should not silently honor.
@@ -2945,7 +2945,7 @@ function applyEngineSettings(patch) {
 }
 
 /**
- * GET /modlens/config: the engine summary above. POST: one submission.
+ * GET /visionforge/config: the engine summary above. POST: one submission.
  *
  * The dsh web server listens on loopback, but a page in the same browser can
  * still reach it, so a write requires a same-origin request: a cross-site POST
@@ -2991,7 +2991,7 @@ async function discoverReuse() {
  * missing, so the editor has something to open.
  */
 function openConfigFile() {
-  const file = modlensConfigPath()
+  const file = visionforgeConfigPath()
   try {
     lstatSync(file)
   } catch {
@@ -3282,9 +3282,9 @@ async function directorySize(dir) {
 
 function registerConfigRoute(ctx) {
   ctx.webServer.register({
-    name: 'modlens-config',
+    name: 'visionforge-config',
     kind: 'exact',
-    path: '/modlens/config',
+    path: '/visionforge/config',
     handler: async (req, res) => {
       const send = (status, body) => {
         res.writeHead(status, { 'content-type': 'application/json' })
@@ -3345,7 +3345,7 @@ function registerConfigRoute(ctx) {
 // reachable from the test suite the way client.js exposes `__card`. They read
 // and write a real file and a real environment, so they are tested against
 // both rather than through the HTTP route.
-export const __config = { engineSummary, applyEngineSettings, modlensConfigPath, refusal: ROUTE_REFUSAL }
+export const __config = { engineSummary, applyEngineSettings, visionforgeConfigPath, refusal: ROUTE_REFUSAL }
 
 // The paste sweeper, reachable from the test suite the way __config is.
 export const __paste = {

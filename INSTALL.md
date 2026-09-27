@@ -141,9 +141,9 @@ npx @lr611/visionforge config set <engine>.model <MODEL>         # 用户选择�
 
 - `qwen` 引擎同时用于视觉读图与图片生成（Qwen-Image）；其余引擎仅读图。
 - 模型必须接受图像输入（纯文本模型会失败或产生幻觉）。
-- 配置写入 `~/.modlens/config.json`，与设置卡片完全等价，任意一处保存即生效。
+- 配置写入 `~/.visionforge/config.json`，与设置卡片完全等价，任意一处保存即生效。
 
-> **Windows note**: `~/.modlens/config.json` holds all values, written with
+> **Windows note**: `~/.visionforge/config.json` holds all values, written with
 > restricted permissions. Re-running `config set` overwrites in place. If a
 > write fails, the home directory is not writable — confirm the user profile
 > path before retrying.

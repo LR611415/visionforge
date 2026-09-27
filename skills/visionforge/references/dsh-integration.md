@@ -10,7 +10,7 @@
 | 命令行（非 desktop） | `npx dsh plugin add @lr611/visionforge` |
 | 安装后 | 重启 DSH 会话（或新开会话），让客户端脚本（client.js）注册生效 |
 
-卸载：DSH 应用内移除即可。插件只写自己的配置（`~/.modlens/`）和缓存（Windows 默认 `D:\VisionForge\out`），**不改写 DSH 官方文件、不影响原生功能**；移除后残留缓存可手动删除。
+卸载：DSH 应用内移除即可。插件只写自己的配置（`~/.visionforge/`）和缓存（Windows 默认 `D:\VisionForge\out`），**不改写 DSH 官方文件、不影响原生功能**；移除后残留缓存可手动删除。
 
 ## 设置卡片
 
@@ -23,7 +23,7 @@ DSH **设置 → 插件/配置 → VisionForge 配置**（名称可能为"Vision
 - **粘贴转路径**：开关
 - **输出目录**：默认 `D:\VisionForge\out`
 
-卡片提交的值写入 `~/.modlens/config.json`（与 CLI 同一个文件）。**AI 在引导时不要替用户填写密钥或具体地址，也不要复述它们**——卡片就是让用户自己填的。
+卡片提交的值写入 `~/.visionforge/config.json`（与 CLI 同一个文件）。**AI 在引导时不要替用户填写密钥或具体地址，也不要复述它们**——卡片就是让用户自己填的。
 
 ## 图片预览 / 放大 / 下载行为
 

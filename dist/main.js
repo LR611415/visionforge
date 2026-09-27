@@ -171,7 +171,7 @@ async function assertSafeRemoteTarget(url) {
   return { hostname, address: chosen.address, family: chosen.family };
 }
 function blockedMessage(target) {
-  return `Blocked private or reserved image target: ${target}. modlens does not download from private addresses and upload the result to a vision provider. For a local or internal image, save it to a file and pass the path instead.`;
+  return `Blocked private or reserved image target: ${target}. visionforge does not download from private addresses and upload the result to a vision provider. For a local or internal image, save it to a file and pass the path instead.`;
 }
 function stripIpv6Brackets(hostname) {
   if (hostname.startsWith("[") && hostname.endsWith("]")) {
@@ -475,7 +475,7 @@ function connectFailureHint(error, url) {
   } catch {
     return null;
   }
-  return `Could not connect to ${host} (${cause.code}). The request never reached the network. If this machine reaches the internet through a proxy, set HTTPS_PROXY/HTTP_PROXY, or run: modlens config set proxy <url>`;
+  return `Could not connect to ${host} (${cause.code}). The request never reached the network. If this machine reaches the internet through a proxy, set HTTPS_PROXY/HTTP_PROXY, or run: visionforge config set proxy <url>`;
 }
 async function apiFetch(url, init, proxy, env = process.env) {
   const dispatcher = apiProxyDispatcher(proxy, env) ?? new Agent();
@@ -1019,7 +1019,7 @@ async function executeAnthropicApi(options) {
   const apiKeySecrets = [.../* @__PURE__ */ new Set([...apiKeys, ...options.apiKeySecrets ?? []])];
   if (!apiKey) {
     throw new Error(
-      "anthropic provider needs an API key. Run: modlens config set anthropic.apiKey and paste it at the hidden prompt"
+      "anthropic provider needs an API key. Run: visionforge config set anthropic.apiKey and paste it at the hidden prompt"
     );
   }
   const model = options.model || options.settings?.model || ANTHROPIC_DEFAULT_MODEL;
@@ -1164,8 +1164,8 @@ function parseEnvelope$1(stdout) {
   return parsed;
 }
 const SWITCH_HINT = `Or switch to a provider with its own quota and no interactive login:
-  modlens config set gemini-api.apiKey <key>   # free key, no card: https://aistudio.google.com
-  modlens config set provider gemini-api`;
+  visionforge config set gemini-api.apiKey <key>   # free key, no card: https://aistudio.google.com
+  visionforge config set provider gemini-api`;
 function describeAntigravityFailure(context) {
   const since = context.startedAt ?? Date.now() - LOG_FRESHNESS_MS;
   let envelope = null;
@@ -1198,7 +1198,7 @@ ${readRecentAgyLog(since)}`;
   if (evidence.includes("not logged into antigravity") || evidence.includes("getting token source") || evidence.includes("keyring") || evidence.includes("failed to read token store")) {
     return [
       "Antigravity CLI cannot read its stored login token.",
-      "On Linux this usually means the OS keyring is locked, which is normal for headless sessions (agents, cron, systemd, SSH without a desktop login). agy then reports it as being signed out and tries a browser sign-in that cannot complete without a display. Unlock the keyring, or run modlens from a desktop session, or sign in again with `agy`.",
+      "On Linux this usually means the OS keyring is locked, which is normal for headless sessions (agents, cron, systemd, SSH without a desktop login). agy then reports it as being signed out and tries a browser sign-in that cannot complete without a display. Unlock the keyring, or run visionforge from a desktop session, or sign in again with `agy`.",
       SWITCH_HINT
     ].join("\n\n");
   }
@@ -1336,7 +1336,7 @@ async function executeGeminiApi(options) {
   const apiKeySecrets = [.../* @__PURE__ */ new Set([...apiKeys, ...options.apiKeySecrets ?? []])];
   if (!apiKey) {
     throw new Error(
-      "gemini-api provider needs an API key. Run: modlens config set gemini-api.apiKey and paste it at the hidden prompt (free key: https://aistudio.google.com)"
+      "gemini-api provider needs an API key. Run: visionforge config set gemini-api.apiKey and paste it at the hidden prompt (free key: https://aistudio.google.com)"
     );
   }
   const model = options.model || options.settings?.model || GEMINI_API_DEFAULT_MODEL;
@@ -1421,9 +1421,9 @@ const geminiApiProvider = {
   defaultModel: GEMINI_API_DEFAULT_MODEL,
   execute: executeGeminiApi
 };
-const KIMI_REENTRY_ENV = "MODLENS_INSIDE_KIMI_CLI";
+const KIMI_REENTRY_ENV = "VISIONFORGE_INSIDE_KIMI_CLI";
 function freshEmptySkillsDir() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "modlens-kimi-skills-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "visionforge-kimi-skills-"));
   process.once("exit", () => {
     try {
       fs.rmdirSync(dir);
@@ -1435,7 +1435,7 @@ function freshEmptySkillsDir() {
 function buildKimiCliInvocation(options) {
   if (process.env[KIMI_REENTRY_ENV] === "1") {
     throw new Error(
-      "kimi-cli refused: this modlens run was started by kimi itself, so calling kimi again would loop. Pick another provider for the nested read, or let the outer read answer."
+      "kimi-cli refused: this visionforge run was started by kimi itself, so calling kimi again would loop. Pick another provider for the nested read, or let the outer read answer."
     );
   }
   if (options.imageKind === "remote") {
@@ -1456,8 +1456,8 @@ ${JSON_TEMPLATE_INSTRUCTION}`;
     prompt,
     "--output-format",
     "stream-json",
-    // Not a preference: without it kimi may load the modlens skill and
-    // read the image by running modlens, which is this process calling
+    // Not a preference: without it kimi may load the visionforge skill and
+    // read the image by running visionforge, which is this process calling
     // itself. Observed, and intermittent, which is the bad kind.
     "--skills-dir",
     freshEmptySkillsDir(),
@@ -1511,10 +1511,10 @@ function derivedSchemaSent$1(settings) {
 }
 function requestShapeAdvice(settings) {
   if (settings?.extraBody?.response_format !== void 0) {
-    return "The response_format in your extraBody replaces the schema modlens derives, so yours decides the shape here. Check it against the contract, or drop it to hand enforcement back to modlens.";
+    return "The response_format in your extraBody replaces the schema visionforge derives, so yours decides the shape here. Check it against the contract, or drop it to hand enforcement back to visionforge.";
   }
   if (!derivedSchemaSent$1(settings)) {
-    return "The gateway was never asked to enforce the shape, so this is the model free-handing it. Ask the gateway instead: modlens config set openai.structuredOutput true.";
+    return "The gateway was never asked to enforce the shape, so this is the model free-handing it. Ask the gateway instead: visionforge config set openai.structuredOutput true.";
   }
   return "The gateway was asked to enforce the shape and answered with this anyway. Retry, or switch to gemini-api / anthropic for enforced schemas.";
 }
@@ -1523,7 +1523,7 @@ function stringOrAbsent$1(value) {
 }
 function unusableOutputAdvice$1(finishReason, settings, quoteReason, whenFinished) {
   if (finishReason === "length") {
-    return `The answer was cut off (finish_reason=length), so this is a length limit rather than a shape problem. Raise it, e.g. modlens config set openai.extraBody '{"max_tokens":4096}'.`;
+    return `The answer was cut off (finish_reason=length), so this is a length limit rather than a shape problem. Raise it, e.g. visionforge config set openai.extraBody '{"max_tokens":4096}'.`;
   }
   if (finishReason !== void 0 && finishReason !== "stop") {
     return `The gateway ended the answer with finish_reason=${quoteReason(finishReason)}, so it may be incomplete for a reason of its own. Check what that reason means for this endpoint before changing the request.`;
@@ -1539,7 +1539,7 @@ async function executeOpenaiCompat(options) {
   const model = options.model || options.settings?.model;
   if (!apiKey || !baseUrl || !model) {
     throw new Error(
-      "openai provider needs baseUrl, apiKey, and model: modlens config set openai.baseUrl <url>, modlens config set openai.apiKey (a hidden prompt), modlens config set openai.model <name>. There is no default endpoint (official OpenAI is https://api.openai.com/v1). OPENAI_BASE_URL and OPENAI_API_KEY still supply this provider on their own, but only while the config file names no openai entry, since 3.17.0 takes a provider whole from one source; no variable carries the model, so an environment-only setup passes -m <name>."
+      "openai provider needs baseUrl, apiKey, and model: visionforge config set openai.baseUrl <url>, visionforge config set openai.apiKey (a hidden prompt), visionforge config set openai.model <name>. There is no default endpoint (official OpenAI is https://api.openai.com/v1). OPENAI_BASE_URL and OPENAI_API_KEY still supply this provider on their own, but only while the config file names no openai entry, since 3.17.0 takes a provider whole from one source; no variable carries the model, so an environment-only setup passes -m <name>."
     );
   }
   const imageUrl = options.imageKind === "remote" ? options.imageSource : toDataUrl$1(readLocalImageBase64(options.imageSource));
@@ -1655,12 +1655,12 @@ function derivedSchemaSent(settings) {
 }
 function unusableOutputAdvice(finishReason, settings, quoteReason, whenFinished) {
   if (finishReason === "length") {
-    return `The answer was cut off (finish_reason=length). Raise the limit, e.g. modlens config set qwen.extraBody '{"max_tokens":4096}'.`;
+    return `The answer was cut off (finish_reason=length). Raise the limit, e.g. visionforge config set qwen.extraBody '{"max_tokens":4096}'.`;
   }
   if (finishReason !== void 0 && finishReason !== "stop") {
     return `The gateway ended the answer with finish_reason=${quoteReason(finishReason)}, so it may be incomplete for a reason of its own. Check what that reason means for this endpoint before changing the request.`;
   }
-  return `${whenFinished} ${settings?.extraBody?.response_format !== void 0 ? "The response_format in your extraBody replaces the schema modlens derives. Check it against the contract, or drop it to hand enforcement back to modlens." : derivedSchemaSent(settings) ? "The gateway was asked to enforce the shape and answered with this anyway. Retry, or switch to gemini-api / anthropic for enforced schemas." : "The gateway was never asked to enforce the shape, so this is the model free-handing it. Ask the gateway instead: modlens config set qwen.structuredOutput true."}`;
+  return `${whenFinished} ${settings?.extraBody?.response_format !== void 0 ? "The response_format in your extraBody replaces the schema visionforge derives. Check it against the contract, or drop it to hand enforcement back to visionforge." : derivedSchemaSent(settings) ? "The gateway was asked to enforce the shape and answered with this anyway. Retry, or switch to gemini-api / anthropic for enforced schemas." : "The gateway was never asked to enforce the shape, so this is the model free-handing it. Ask the gateway instead: visionforge config set qwen.structuredOutput true."}`;
 }
 function stringOrAbsent(value) {
   return typeof value === "string" ? value : void 0;
@@ -1676,7 +1676,7 @@ async function executeQwen(options) {
   const model = options.model || options.settings?.model || DEFAULT_QWEN_VL_MODEL;
   if (!apiKey) {
     throw new Error(
-      "qwen provider needs an apiKey: modlens config set qwen.apiKey <key> (hidden prompt). Free key: https://bailian.console.aliyun.com/ (阿里云百炼). MODLENS_QWEN_API_KEY supplies this provider on its own while the config file names no qwen entry."
+      "qwen provider needs an apiKey: visionforge config set qwen.apiKey <key> (hidden prompt). Free key: https://bailian.console.aliyun.com/ (阿里云百炼). VISIONFORGE_QWEN_API_KEY supplies this provider on its own while the config file names no qwen entry."
     );
   }
   const imageUrl = options.imageKind === "remote" ? options.imageSource : toDataUrl(readLocalImageBase64(options.imageSource));
@@ -1811,13 +1811,13 @@ function listProviders() {
 }
 const STRING_FIELDS = ["apiKey", "baseUrl", "model", "proxy"];
 const REUSE_HARNESSES = ["claude", "codex", "opencode", "pi", "grok"];
-const CONFIG_DIR = path.join(os.homedir(), ".modlens");
+const CONFIG_DIR = path.join(os.homedir(), ".visionforge");
 const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
 const ENV_BINDINGS = {
   "gemini-api": { apiKey: "GEMINI_API_KEY", baseUrl: "GEMINI_BASE_URL" },
   openai: { apiKey: "OPENAI_API_KEY", baseUrl: "OPENAI_BASE_URL" },
   anthropic: { apiKey: "ANTHROPIC_API_KEY", baseUrl: "ANTHROPIC_BASE_URL" },
-  qwen: { apiKey: "MODLENS_QWEN_API_KEY", baseUrl: "MODLENS_QWEN_BASE_URL" }
+  qwen: { apiKey: "VISIONFORGE_QWEN_API_KEY", baseUrl: "VISIONFORGE_QWEN_BASE_URL" }
 };
 function fileKeysFor(providerName, config2) {
   return Object.keys(isPlainObject(config2.providers) ? config2.providers : {}).filter(
@@ -1870,7 +1870,7 @@ function assertNoRetiredEndpointBinding(providerName, settings, env = process.en
   const shown = maskUrlCredentials(env[variable]?.trim() ?? "");
   const reference = process.platform === "win32" ? `$env:${variable}` : `"$${variable}"`;
   throw new Error(
-    `${variable} is set (${shown}), but the config file configures ${providerName}, and since 3.17.0 a provider takes its settings from one place: the file, whole. ${providerName}.baseUrl is not in it, so ${binding.consequence}. To keep the endpoint you were using, run: modlens config set ${providerName}.baseUrl ${reference}`
+    `${variable} is set (${shown}), but the config file configures ${providerName}, and since 3.17.0 a provider takes its settings from one place: the file, whole. ${providerName}.baseUrl is not in it, so ${binding.consequence}. To keep the endpoint you were using, run: visionforge config set ${providerName}.baseUrl ${reference}`
   );
 }
 function loadConfigFile(configPath = CONFIG_PATH) {
@@ -2208,7 +2208,7 @@ function saveProviderBundle(slot, label, configPath = CONFIG_PATH) {
   const snapshot = fileSettingsFor(canonical, config2);
   if (Object.keys(snapshot).length === 0) {
     throw new Error(
-      `Nothing to save: the ${canonical} slot is empty in ${configPath}. Configure it first (modlens config set openai.baseUrl <url>).`
+      `Nothing to save: the ${canonical} slot is empty in ${configPath}. Configure it first (visionforge config set openai.baseUrl <url>).`
     );
   }
   if (config2.saved !== void 0 && !isPlainObject(config2.saved)) {
@@ -2250,7 +2250,7 @@ function useProviderBundle(slot, label, discard = false, configPath = CONFIG_PAT
   const known = Object.keys(bundles).sort();
   if (!Object.hasOwn(bundles, label)) {
     throw new Error(
-      known.length === 0 ? `No saved copies exist for ${canonical} yet. Save the current one first: modlens config save openai <label>.` : `No saved copy named "${label}". Saved: ${known.join(", ")}.`
+      known.length === 0 ? `No saved copies exist for ${canonical} yet. Save the current one first: visionforge config save openai <label>.` : `No saved copy named "${label}". Saved: ${known.join(", ")}.`
     );
   }
   const bundle = bundles[label];
@@ -2269,7 +2269,7 @@ function useProviderBundle(slot, label, discard = false, configPath = CONFIG_PAT
   const currentSaved = Object.keys(current).length === 0 || Object.values(bundles).some((entry) => deepEqualJson(entry, current));
   if (!currentSaved && !discard) {
     throw new Error(
-      `The current ${canonical} settings are not saved under any label and would be lost. Save them first (modlens config save openai <label>) or pass --discard.`
+      `The current ${canonical} settings are not saved under any label and would be lost. Save them first (visionforge config save openai <label>) or pass --discard.`
     );
   }
   for (const key of fileKeysFor(canonical, config2)) {
@@ -2562,25 +2562,25 @@ const PROVIDER_DESCRIPTORS = [
     name: "gemini-api",
     kind: "api",
     required: [{ field: "apiKey" }],
-    fix: "modlens config set gemini-api.apiKey   # hidden prompt; free key: https://aistudio.google.com"
+    fix: "visionforge config set gemini-api.apiKey   # hidden prompt; free key: https://aistudio.google.com"
   },
   {
     name: "openai",
     kind: "api",
     required: [{ field: "baseUrl" }, { field: "apiKey" }, { field: "model" }],
-    fix: "modlens config set openai.baseUrl <url> / openai.apiKey (hidden prompt) / openai.model <name>"
+    fix: "visionforge config set openai.baseUrl <url> / openai.apiKey (hidden prompt) / openai.model <name>"
   },
   {
     name: "qwen",
     kind: "api",
     required: [{ field: "apiKey" }],
-    fix: "modlens config set qwen.apiKey <key>   # hidden prompt; free key: https://bailian.console.aliyun.com/ (阿里云百炼)"
+    fix: "visionforge config set qwen.apiKey <key>   # hidden prompt; free key: https://bailian.console.aliyun.com/ (阿里云百炼)"
   },
   {
     name: "anthropic",
     kind: "api",
     required: [{ field: "apiKey" }],
-    fix: "modlens config set anthropic.apiKey   # hidden prompt"
+    fix: "visionforge config set anthropic.apiKey   # hidden prompt"
   },
   {
     name: "claude-cli",
@@ -3253,7 +3253,7 @@ function readCache(cachePath, ttlMs) {
 function discoverAuto(options = {}) {
   const env = options.env ?? process.env;
   const home = options.home ?? os.homedir();
-  const cachePath = options.cachePath ?? path.join(home, ".modlens", "auto-cache.json");
+  const cachePath = options.cachePath ?? path.join(home, ".visionforge", "auto-cache.json");
   const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
   if (!options.fresh) {
     const cached = readCache(cachePath, ttlMs);
@@ -3699,7 +3699,7 @@ function parseCooldownStateKey(stateKey) {
   };
 }
 function currentStatePath() {
-  return path.join(os.homedir(), ".modlens", "state.json");
+  return path.join(os.homedir(), ".visionforge", "state.json");
 }
 const DEFAULT_COOLDOWN_MS = 45 * 60 * 1e3;
 const MONTHLY_COOLDOWN_MS = 24 * 60 * 60 * 1e3;
@@ -3932,7 +3932,7 @@ async function analyzeImage(options) {
   }
   if (chain.length === 0) {
     throw new Error(
-      "No vision provider is set up on this machine. Install Antigravity CLI (curl -fsSL https://antigravity.google/cli/install.sh | bash, then run agy once to sign in), or configure a key: modlens config set gemini-api.apiKey <key>. Run modlens doctor for the full picture." + reuseHint(config2, options.autoOptions)
+      "No vision provider is set up on this machine. Install Antigravity CLI (curl -fsSL https://antigravity.google/cli/install.sh | bash, then run agy once to sign in), or configure a key: visionforge config set gemini-api.apiKey <key>. Run visionforge doctor for the full picture." + reuseHint(config2, options.autoOptions)
     );
   }
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -4188,7 +4188,7 @@ function reuseHint(config2, autoOptions) {
     const parts = [];
     if (unasked.length > 0) {
       parts.push(
-        ` Hint: this machine has vision reachable through ${unasked.join(", ")}, which modlens is not yet allowed to reuse. Ask the user, then: modlens config set reuse.<harness> true.`
+        ` Hint: this machine has vision reachable through ${unasked.join(", ")}, which visionforge is not yet allowed to reuse. Ask the user, then: visionforge config set reuse.<harness> true.`
       );
     }
     if (dead.length > 0) {
@@ -4293,7 +4293,7 @@ async function removeWorkdir(workdir) {
   }
 }
 async function isolateImage(source) {
-  const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "modlens-work-"));
+  const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "visionforge-work-"));
   try {
     const imageSource = path.join(workdir, path.basename(source));
     fs.copyFileSync(source, imageSource);
@@ -4309,7 +4309,7 @@ async function isolateImage(source) {
   }
 }
 function emptyWorkdir() {
-  const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "modlens-work-"));
+  const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "visionforge-work-"));
   return {
     workdir,
     cleanup: () => removeWorkdir(workdir)
@@ -4330,7 +4330,7 @@ function runCommand(providerName, invocation, timeoutMs, describeFailure) {
       cwd: invocation.cwd,
       stdio: ["ignore", "pipe", "pipe"],
       // A provider may mark its own child, which is how kimi-cli tells a
-      // modlens started by kimi that running kimi again would loop.
+      // visionforge started by kimi that running kimi again would loop.
       ...spawnEnv ? { env: spawnEnv } : {}
     });
     const outDecoder = new TextDecoder("utf-8");
@@ -4475,7 +4475,7 @@ function harnessFromPsTable(psOutput, startPid) {
   return null;
 }
 function detectHarnessDetailed() {
-  const override = process.env.MODLENS_HARNESS;
+  const override = process.env.VISIONFORGE_HARNESS;
   if (override) {
     return { harness: override === "none" ? null : override, source: "override" };
   }
@@ -5053,11 +5053,11 @@ function sniffModel(harness, cwd, env, roots = {}) {
 }
 function detectActiveModel(options) {
   const env = options.env ?? process.env;
-  const envModel = env.MODLENS_MODEL?.trim();
+  const envModel = env.VISIONFORGE_MODEL?.trim();
   if (envModel) {
     return envModel.toLowerCase() === "none" ? { model: null, source: "env" } : { model: envModel, source: "env" };
   }
-  const forced = env.MODLENS_HARNESS;
+  const forced = env.VISIONFORGE_HARNESS;
   const harness = forced === "none" ? null : forced || (options.harness !== void 0 ? options.harness : detectHarnessDetailed().harness);
   const sniffed = harness ? sniffModel(harness, options.cwd, env, options.roots) : null;
   if (sniffed) {
@@ -5102,7 +5102,7 @@ function isOlder(pinned, current) {
 function readPinnedVersion(launcher) {
   return /^PINNED="([^"]+)"/m.exec(launcher)?.[1] ?? null;
 }
-function findSkillInstalls(currentVersion, home = os.homedir(), skillName = "modlens") {
+function findSkillInstalls(currentVersion, home = os.homedir(), skillName = "visionforge") {
   const installs = [];
   for (const [harness, relative] of SKILL_DIRS) {
     const launcher = path.join(home, relative, skillName, "scripts", "run.sh");
@@ -5360,7 +5360,7 @@ function mark(ok) {
 }
 function renderDoctorReport(report) {
   const lines = [];
-  lines.push("modlens doctor");
+  lines.push("visionforge doctor");
   lines.push("(local diagnostics only: no network calls, no provider quota spent)");
   lines.push("");
   lines.push("Node");
@@ -5418,7 +5418,7 @@ function renderDoctorReport(report) {
     }
     if (report.skillInstalls.some((install) => install.outdated)) {
       lines.push("  Refresh an outdated copy by re-running the install: it overwrites in");
-      lines.push("  place. See https://github.com/liustack/modlens/blob/main/INSTALL.md");
+      lines.push("  place. See https://github.com/liustack/visionforge/blob/main/INSTALL.md");
     }
     lines.push("");
   }
@@ -5431,7 +5431,7 @@ function renderDoctorReport(report) {
     `  verdict: ${report.guard.verdict}${report.guard.matched ? ` (matched "${report.guard.matched}")` : ""}, ${report.guard.reason}`
   );
   lines.push("");
-  lines.push('Reuse (may modlens reuse other local logins? config "reuse.<harness>")');
+  lines.push('Reuse (may visionforge reuse other local logins? config "reuse.<harness>")');
   lines.push(
     `  decisions: ${Object.entries(report.reuse.decisions).map(([harness, decision]) => `${harness} ${decision}`).join(", ")}`
   );
@@ -5593,7 +5593,7 @@ function pruneImageCache(config2) {
     const entries = fs$1.readdirSync(dir);
     const now = Date.now();
     for (const name of entries) {
-      if (!name.startsWith("modlens-")) continue;
+      if (!name.startsWith("visionforge-")) continue;
       const full = path$1.join(dir, name);
       try {
         const st = fs$1.statSync(full);
@@ -5611,8 +5611,8 @@ function pruneImageCache(config2) {
 function imageGenOutDir(config2) {
   const custom = config2?.outputDir?.trim();
   if (custom) return path$1.resolve(custom);
-  if (process.platform === "win32") return path$1.resolve("D:\\modlens\\out");
-  return path$1.join(os$1.homedir(), ".modlens", "out");
+  if (process.platform === "win32") return path$1.resolve("D:\\visionforge\\out");
+  return path$1.join(os$1.homedir(), ".visionforge", "out");
 }
 function qwenImageApiKey(config2, env) {
   const keys = splitApiKeys(resolveProviderSettings("qwen", config2, env).apiKey);
@@ -5631,11 +5631,11 @@ function glmImageApiKey(config2, env) {
   }
   return void 0;
 }
-const NO_KEY_MESSAGE = "No image-generation provider is configured. Configure at least one key: modlens config set qwen.apiKey <key> (千问, also powers Qwen-Image), or modlens config set glm.apiKey <key> (智谱 GLM-Image, also honored from GLM_API_KEY/ZHIPU_API_KEY).";
+const NO_KEY_MESSAGE = "No image-generation provider is configured. Configure at least one key: visionforge config set qwen.apiKey <key> (千问, also powers Qwen-Image), or visionforge config set glm.apiKey <key> (智谱 GLM-Image, also honored from GLM_API_KEY/ZHIPU_API_KEY).";
 function routeTextToImage(forced, qwenKey, glmKey) {
   if (forced) {
     if (forced === "qwen" && !qwenKey) {
-      throw new Error("qwen image generation needs qwen.apiKey (or MODLENS_QWEN_API_KEY).");
+      throw new Error("qwen image generation needs qwen.apiKey (or VISIONFORGE_QWEN_API_KEY).");
     }
     if (forced === "glm" && !glmKey) {
       throw new Error("glm image generation needs glm.apiKey (or GLM_API_KEY).");
@@ -5679,7 +5679,7 @@ function resolveOutputPath(output, url, config2) {
     return path$1.resolve(output.trim());
   }
   const ts = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-  const name = `modlens-${ts}-${Math.random().toString(36).slice(2, 6)}${extensionFromUrl(url)}`;
+  const name = `visionforge-${ts}-${Math.random().toString(36).slice(2, 6)}${extensionFromUrl(url)}`;
   return path$1.join(imageGenOutDir(config2), name);
 }
 function numberedSibling(output, n, url) {
@@ -5747,7 +5747,7 @@ async function editImage(options) {
   const qwenKey = qwenImageApiKey(options.config, env);
   if (!qwenKey) {
     throw new Error(
-      "Image editing needs the qwen provider: modlens config set qwen.apiKey <key> (千问 qwen-image-edit). GLM-Image does not support editing."
+      "Image editing needs the qwen provider: visionforge config set qwen.apiKey <key> (千问 qwen-image-edit). GLM-Image does not support editing."
     );
   }
   const timeoutMs = options.timeoutMs ?? 12e4;
@@ -5792,7 +5792,7 @@ const EXT_BY_MIME = {
 const ADAPTERS = [claudeAdapter, piAdapter, opencodeAdapter];
 function prepareOutDir(explicit) {
   if (!explicit) {
-    return fs.mkdtempSync(path.join(os.tmpdir(), "modlens-paste-"));
+    return fs.mkdtempSync(path.join(os.tmpdir(), "visionforge-paste-"));
   }
   const outDir = path.resolve(explicit);
   if (!fs.existsSync(outDir)) {
@@ -6010,7 +6010,7 @@ function parsePositiveInt(raw, flag) {
   }
   return Number.parseInt(raw, 10);
 }
-program.name("modlens").description("Plug-in vision for text-only LLMs: image in, structured JSON evidence out").version("3.26.3");
+program.name("visionforge").description("Plug-in vision for text-only LLMs: image in, structured JSON evidence out").version("3.26.3");
 program.command("analyze", { isDefault: true }).description("Analyze an image into structured JSON evidence (default command)").requiredOption("-i, --input <path|url>", "Input image path or https URL").option("-o, --output <path>", "Write result JSON to a file").option("-m, --model <name>", "Provider model name").option("-p, --provider <name>", `Vision provider (${listProviders().join(", ")})`).option("--prompt <text>", "Extra focus for this image").option("--timeout <ms>", "Provider timeout in milliseconds", "180000").option("--provider-bin <path>", "Provider binary path (default: agy)").option("--workdir <path>", "Working directory for the provider").option(
   "--extra-body <json>",
   `JSON merged into the API request body, e.g. '{"thinking":{"type":"disabled"}}'`
@@ -6018,7 +6018,7 @@ program.command("analyze", { isDefault: true }).description("Analyze an image in
   try {
     const timeoutMs = parsePositiveInt(options.timeout, "--timeout (milliseconds)");
     const config2 = loadConfigFile();
-    if (process.env.MODLENS_MODEL?.trim()) {
+    if (process.env.VISIONFORGE_MODEL?.trim()) {
       const verdict = runGuard(config2.guards, {
         cwd: process.cwd(),
         env: process.env
@@ -6026,7 +6026,7 @@ program.command("analyze", { isDefault: true }).description("Analyze an image in
       if (verdict.guard === "deny" && verdict.model) {
         const cause = verdict.matched ? `matches guards.denyModels pattern "${verdict.matched}". A model with native vision should read the image itself.` : "is not on guards.allowModels, which only lets listed models run the engine.";
         throw new Error(
-          `Invocation guard denied this read: active model "${verdict.model}" ${cause} To override, unset MODLENS_MODEL or edit guards in ${CONFIG_PATH}.`
+          `Invocation guard denied this read: active model "${verdict.model}" ${cause} To override, unset VISIONFORGE_MODEL or edit guards in ${CONFIG_PATH}.`
         );
       }
     }
@@ -6058,7 +6058,7 @@ program.command("analyze", { isDefault: true }).description("Analyze an image in
     process.exitCode = 1;
   }
 });
-program.command("generate").description("Generate an image from text (Qwen-Image via qwen key, or GLM-Image via glm key). Requires at least one image-generation key: qwen.apiKey or glm.apiKey.").requiredOption("-p, --prompt <text>", "Text description of the image to generate").option("-o, --output <path>", "Save the image to this path (default: ~/.modlens/out/ with a timestamped name)").option("--size <wxh>", "Output size, e.g. 1024x1024 (qwen) / 1280x1280 (glm)", "1024*1024").option("-m, --model <name>", "Generation model name (default: qwen-image or glm-image)").option("--provider <name>", "Force the provider: qwen or glm (default: qwen if configured, else glm)").option("--timeout <ms>", "Provider timeout in milliseconds", "120000").action(async (options) => {
+program.command("generate").description("Generate an image from text (Qwen-Image via qwen key, or GLM-Image via glm key). Requires at least one image-generation key: qwen.apiKey or glm.apiKey.").requiredOption("-p, --prompt <text>", "Text description of the image to generate").option("-o, --output <path>", "Save the image to this path (default: ~/.visionforge/out/ with a timestamped name)").option("--size <wxh>", "Output size, e.g. 1024x1024 (qwen) / 1280x1280 (glm)", "1024*1024").option("-m, --model <name>", "Generation model name (default: qwen-image or glm-image)").option("--provider <name>", "Force the provider: qwen or glm (default: qwen if configured, else glm)").option("--timeout <ms>", "Provider timeout in milliseconds", "120000").action(async (options) => {
   try {
     const timeoutMs = parsePositiveInt(options.timeout, "--timeout (milliseconds)");
     const result = await generateImage({
@@ -6080,7 +6080,7 @@ program.command("generate").description("Generate an image from text (Qwen-Image
     process.exitCode = 1;
   }
 });
-program.command("edit").description("Edit an existing image from a text instruction (Qwen-Image edit only; GLM-Image does not support editing). Requires the qwen key.").requiredOption("-i, --input <path|url...>", "Input image path(s) or https URL(s) to edit (1-3, space-separated)").requiredOption("-p, --prompt <text>", "Editing instruction").option("-o, --output <path>", "Save the edited image(s) to this path (default: ~/.modlens/out/ with a timestamped name; for multiple outputs only the first is saved here)").option("-n, --count <n>", "Number of images to output (1-6, default 1)", "1").option("--size <wxh>", "Output size, e.g. 1024x1024", "1024*1024").option("-m, --model <name>", "Editing model name (default: qwen-image-edit)").option("--timeout <ms>", "Provider timeout in milliseconds", "120000").action(async (options) => {
+program.command("edit").description("Edit an existing image from a text instruction (Qwen-Image edit only; GLM-Image does not support editing). Requires the qwen key.").requiredOption("-i, --input <path|url...>", "Input image path(s) or https URL(s) to edit (1-3, space-separated)").requiredOption("-p, --prompt <text>", "Editing instruction").option("-o, --output <path>", "Save the edited image(s) to this path (default: ~/.visionforge/out/ with a timestamped name; for multiple outputs only the first is saved here)").option("-n, --count <n>", "Number of images to output (1-6, default 1)", "1").option("--size <wxh>", "Output size, e.g. 1024x1024", "1024*1024").option("-m, --model <name>", "Editing model name (default: qwen-image-edit)").option("--timeout <ms>", "Provider timeout in milliseconds", "120000").action(async (options) => {
   try {
     const timeoutMs = parsePositiveInt(options.timeout, "--timeout (milliseconds)");
     const count = parsePositiveInt(options.count, "--count");
@@ -6188,11 +6188,11 @@ config.command("init").description(`Create a starter config at ${CONFIG_PATH}`).
       [
         `Created ${CONFIG_PATH}`,
         "Everything is optional. The usual ones:",
-        "  modlens config set provider <name>                      which provider analyzes images",
-        "  modlens config set cooldown on|off                       quota cooldown (on by default)",
-        "  modlens config set <provider>.<apiKey|baseUrl|model|proxy> <value>   provider settings",
-        '  modlens config set openai.proxy ""                  make one API provider connect directly',
-        `  modlens config set <provider>.extraBody '{"thinking":{"type":"disabled"}}'   vendor request fields`,
+        "  visionforge config set provider <name>                      which provider analyzes images",
+        "  visionforge config set cooldown on|off                       quota cooldown (on by default)",
+        "  visionforge config set <provider>.<apiKey|baseUrl|model|proxy> <value>   provider settings",
+        '  visionforge config set openai.proxy ""                  make one API provider connect directly',
+        `  visionforge config set <provider>.extraBody '{"thinking":{"type":"disabled"}}'   vendor request fields`,
         ""
       ].join("\n")
     );
@@ -6244,7 +6244,7 @@ config.command("set <key> [value]").description(
     let resolved = value;
     if (resolved === void 0) {
       if (!key.endsWith(".apiKey")) {
-        throw new Error(`${key} needs a value: modlens config set ${key} <value>`);
+        throw new Error(`${key} needs a value: visionforge config set ${key} <value>`);
       }
       resolved = await readSecret(`${key} (input hidden): `);
     }
@@ -6271,7 +6271,7 @@ config.command("show").description("Print the effective config (file merged with
     process.exitCode = 1;
   }
 });
-const state = program.command("state").description("Manage the quota cooldown state at ~/.modlens/state.json");
+const state = program.command("state").description("Manage the quota cooldown state at ~/.visionforge/state.json");
 state.command("clear").description(
   "Forget every provider cooldown, so all providers are tried at full priority again"
 ).action(() => {

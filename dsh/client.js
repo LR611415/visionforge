@@ -1,13 +1,13 @@
-// Browser half of the modlens dsh plugin: paste-to-path.
+// Browser half of the visionforge dsh plugin: paste-to-path.
 //
 // A capture-phase paste listener runs before the composer's own handler.
 // When the clipboard carries image files, the default intake (attachment ->
 // host image admission -> "model does not support images" for text-only
 // models) is suppressed; the bytes go to the plugin's host route
-// (POST /modlens/paste), land as a private temp file, and the returned path
+// (POST /visionforge/paste), land as a private temp file, and the returned path
 // is inserted into the composer as plain text. A text-only model then sees
 // exactly what Pi, OpenCode, and Claude Code hand their models: a file path,
-// which is also the modlens skill's and the read tool's primary trigger.
+// which is also the visionforge skill's and the read tool's primary trigger.
 //
 // Hand-written in the lazy-CJS bundle protocol (window.__ModuleLoader__.load
 // with a factory returning cordis-plugin exports), so no build step and no
@@ -88,7 +88,7 @@ window.__ModuleLoader__.load({
 
     function uploadOne(file) {
       return file.arrayBuffer().then((buffer) =>
-        fetch('/modlens/paste', { method: 'POST', body: buffer }).then((res) => {
+        fetch('/visionforge/paste', { method: 'POST', body: buffer }).then((res) => {
           if (!res.ok) {
             return res
               .json()
@@ -156,17 +156,17 @@ window.__ModuleLoader__.load({
         target.focus()
         return document.execCommand('delete')
       } catch (error) {
-        console.error('[modlens] removeMdFromComposer failed: ' + (error?.message || error))
+        console.error('[visionforge] removeMdFromComposer failed: ' + (error?.message || error))
         return false
       }
     }
 
     function showPastePreview(target, items) {
       try {
-        var olds = document.querySelectorAll('[data-modlens-paste-preview]')
+        var olds = document.querySelectorAll('[data-visionforge-paste-preview]')
         if (olds.length > 0) olds[0].remove()
         var bar = document.createElement('div')
-        bar.setAttribute('data-modlens-paste-preview', '1')
+        bar.setAttribute('data-visionforge-paste-preview', '1')
         bar.style.cssText =
           'position:fixed;bottom:140px;right:24px;z-index:2147483000;display:flex;align-items:center;gap:8px;' +
           'padding:8px 12px;border:1px solid rgba(127,127,127,0.3);border-radius:10px;' +
@@ -191,7 +191,7 @@ window.__ModuleLoader__.load({
             remaining -= 1
             if (remaining <= 0) bar.remove()
             var ok = removeMdFromComposer(target, item.md)
-            if (!ok) console.warn('[modlens] 未能从输入框删除对应的链接，请手动删除。')
+            if (!ok) console.warn('[visionforge] 未能从输入框删除对应的链接，请手动删除。')
           }
           cell.appendChild(img)
           cell.appendChild(x)
@@ -212,7 +212,7 @@ window.__ModuleLoader__.load({
         bar.appendChild(close)
         document.body.appendChild(bar)
       } catch (error) {
-        console.error('[modlens] paste preview toast failed: ' + (error?.message || error))
+        console.error('[visionforge] paste preview toast failed: ' + (error?.message || error))
       }
     }
 
@@ -225,7 +225,7 @@ window.__ModuleLoader__.load({
       return ''
     }
 
-    // Whether to take a paste over is the HOST's call (GET /modlens/paste
+    // Whether to take a paste over is the HOST's call (GET /visionforge/paste
     // with the selector label; the host resolves it against real model
     // metadata). A name regex here once declared every vision model it did
     // not recognize text-only and hijacked its native paste. The verdict is
@@ -256,7 +256,7 @@ window.__ModuleLoader__.load({
       if (cached?.pending) return
       var entry = { pending: true, takeover: cached ? cached.takeover : false, at: cached ? cached.at : 0 }
       verdicts[label] = entry
-      fetch(`/modlens/paste?model=${encodeURIComponent(label)}`)
+      fetch(`/visionforge/paste?model=${encodeURIComponent(label)}`)
         .then((res) => {
           if (res.status === 404 || res.status === 403) {
             routeAvailable = false
@@ -328,7 +328,7 @@ window.__ModuleLoader__.load({
             routeAvailable = false
             verdicts = {}
           }
-          console.error(`[modlens] paste-to-path failed: ${error?.message ? error.message : error}`)
+          console.error(`[visionforge] paste-to-path failed: ${error?.message ? error.message : error}`)
         })
         var text = items
           .map(function (it) {
@@ -337,7 +337,7 @@ window.__ModuleLoader__.load({
           .join(' ')
         if (!text) return
         if (!insertText(target, `${text} `)) {
-          console.error(`[modlens] paste-to-path: could not insert into the composer (${text})`)
+          console.error(`[visionforge] paste-to-path: could not insert into the composer (${text})`)
         }
         if (items.length > 0) showPastePreview(target, items)
       })
@@ -347,7 +347,7 @@ window.__ModuleLoader__.load({
     // and does not enumerate settings namespaces, so a card is contributed
     // through the `settings.plugin.item` slot rather than by declaring a
     // schema. It reads and writes the host route above, which owns
-    // ~/.modlens/config.json: the browser never sees an API key, and never
+    // ~/.visionforge/config.json: the browser never sees an API key, and never
     // sends a blank one back over a stored key.
     var ENGINES = ['antigravity-cli', 'gemini-api', 'openai', 'qwen', 'anthropic', 'claude-cli', 'kimi-cli']
     // Display names follow each vendor's own convention (Qwen, OpenAI,
@@ -434,7 +434,7 @@ window.__ModuleLoader__.load({
         engine: 'Engine',
         apiKey: 'API key',
         apiKeyHint:
-          'Separate multiple keys with commas. ModLens rotates to the next key after authentication, rate-limit, or quota failures.',
+          'Separate multiple keys with commas. VisionForge rotates to the next key after authentication, rate-limit, or quota failures.',
         baseUrl: 'Base URL',
         model: 'Model',
         proxyRoute: 'Proxy route',
@@ -721,7 +721,7 @@ window.__ModuleLoader__.load({
           }),
         )
 
-      return function ModlensCard() {
+      return function visionforgeCard() {
         // Subscribed, not sampled: the language is a live setting, and a card
         // sitting open while the user switches has to follow. getSnapshot and
         // subscribe are the pair dsh documents as useSyncExternalStore-safe.
@@ -752,7 +752,7 @@ window.__ModuleLoader__.load({
           // self-check probing which local harnesses exist to be borrowed,
           // paid after the form is up, cached host-side.
           var id = ++gen
-          fetch('/modlens/config')
+          fetch('/visionforge/config')
             .then((r) =>
               r.json().then((body) => {
                 if (!r.ok) throw new Error(body.error || '')
@@ -764,7 +764,7 @@ window.__ModuleLoader__.load({
               summaryState[1](next)
               draftState[1](seed(next, next.provider))
               noteState[1]('')
-              return fetch('/modlens/config?discover=1')
+              return fetch('/visionforge/config?discover=1')
                 .then((r) =>
                   r.json().then((body) => {
                     if (!r.ok) throw new Error(body.error || '')
@@ -1291,7 +1291,7 @@ window.__ModuleLoader__.load({
                     href: '#',
                     onClick: (event) => {
                       event.preventDefault()
-                      fetch('/modlens/config', {
+                      fetch('/visionforge/config', {
                         method: 'POST',
                         headers: { 'content-type': 'application/json' },
                         body: JSON.stringify({ open: true }),
@@ -1352,7 +1352,7 @@ window.__ModuleLoader__.load({
                     onClick: () => {
                       noteState[1](t.saving)
                       var payload = savePayload(summary, draft)
-                      fetch('/modlens/config', {
+                      fetch('/visionforge/config', {
                         method: 'POST',
                         headers: { 'content-type': 'application/json' },
                         body: JSON.stringify(payload),
@@ -1482,7 +1482,7 @@ window.__ModuleLoader__.load({
             () => () => {
               localeRef.current = null
             },
-            'modlens: locale handle',
+            'visionforge: locale handle',
           )
         }
       })
@@ -1495,13 +1495,13 @@ window.__ModuleLoader__.load({
         // network failure reads as absent. A 403 is the route's same-origin
         // loopback fence turning this page away, which is just as permanent,
         // so the card stays away there too.
-        fetch('/modlens/config')
+        fetch('/visionforge/config')
           .then((response) => {
             if (response.status === 404 || response.status === 403) return
             try {
               mountCard(scope, localeRef)
             } catch (error) {
-              console.error(`[modlens] settings card skipped: ${error}`)
+              console.error(`[visionforge] settings card skipped: ${error}`)
             }
           })
           .catch(() => {})
@@ -1513,7 +1513,7 @@ window.__ModuleLoader__.load({
       try {
         react = require('react')
       } catch (error) {
-        console.error(`[modlens] settings card skipped: ${error}`)
+        console.error(`[visionforge] settings card skipped: ${error}`)
         return
       }
       var ui = require('@deepseek-ai/dsh-client-ui-primitives')
@@ -1525,14 +1525,14 @@ window.__ModuleLoader__.load({
       // Plugins section lists it and renders this page when selected.
       ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({
         name: 'settings.plugins.tab',
-        id: 'modlens',
+        id: 'visionforge',
         order: 30,
         label: () => labels(localeRef?.current?.getSnapshot?.().active || '').tab,
       }, Card))
     }
 
     // Generated-image preview styling: keep the in-chat thumbnail small and
-    // zoom it in on hover (the local /modlens/image route renders without a
+    // zoom it in on hover (the local /visionforge/image route renders without a
     // download header, so the browser never starts a download).
     // Generated-image preview styling: keep the in-chat thumbnail small.
     // Zooming is left to the host: the card's own "放大" button and a click
@@ -1543,7 +1543,7 @@ window.__ModuleLoader__.load({
       try {
         var style = document.createElement('style')
         style.textContent =
-          'img[src*="/modlens/image"], img[data-vf-src]{' +
+          'img[src*="/visionforge/image"], img[data-vf-src]{' +
           'max-width:90px !important;max-height:90px !important;height:auto;' +
           'border-radius:8px;cursor:zoom-in;' +
           'transition:transform .18s ease,box-shadow .18s ease;' +
@@ -1556,7 +1556,7 @@ window.__ModuleLoader__.load({
         } catch (err) { /* observer is a nicety */ }
         // Zooming opens the original file in the machine's default image
         // viewer (Windows photo app / default viewer) via the local
-        // /modlens/open route — not DSH's built-in viewer, not an in-chat
+        // /visionforge/open route — not DSH's built-in viewer, not an in-chat
         // lightbox. Both a click on the thumbnail and the host card's own
         // "放大/zoom" button are routed there.
         // Renderer-level fallback: some DSH builds block <img> loads from the
@@ -1605,7 +1605,7 @@ window.__ModuleLoader__.load({
         }
         function scanThumbs(root) {
           try {
-            var imgs = root.querySelectorAll ? root.querySelectorAll('img[src*="/modlens/image"]') : []
+            var imgs = root.querySelectorAll ? root.querySelectorAll('img[src*="/visionforge/image"]') : []
             for (var i = 0; i < imgs.length; i++) hydrateThumb(imgs[i])
           } catch (err) { /* scan is a nicety */ }
         }
@@ -1617,7 +1617,7 @@ window.__ModuleLoader__.load({
             lastOpenAt = now
             var u = new URL(src)
             var p = u.searchParams.get('path')
-            if (p) fetch(u.origin + '/modlens/open?path=' + encodeURIComponent(p)).catch(function () {})
+            if (p) fetch(u.origin + '/visionforge/open?path=' + encodeURIComponent(p)).catch(function () {})
           } catch (err) {
             // ignore malformed src
           }
@@ -1625,7 +1625,7 @@ window.__ModuleLoader__.load({
         function findCardImage(elm) {
           var host = elm
           while (host && host !== document.body) {
-            var img = host.querySelector && host.querySelector('img[src*="/modlens/image"], img[data-vf-src]')
+            var img = host.querySelector && host.querySelector('img[src*="/visionforge/image"], img[data-vf-src]')
             if (img) return img
             host = host.parentNode
           }
@@ -1656,7 +1656,7 @@ window.__ModuleLoader__.load({
             var u = new URL(src)
             var p = u.searchParams.get('path')
             if (!p) return
-            fetch(u.origin + '/modlens/download-local?path=' + encodeURIComponent(p))
+            fetch(u.origin + '/visionforge/download-local?path=' + encodeURIComponent(p))
               .then(function (r) {
                 return r.json().catch(function () {
                   return {}
@@ -1667,11 +1667,11 @@ window.__ModuleLoader__.load({
                 else toast('保存失败：服务端未确认，请查看控制台')
               })
               .catch(function (err) {
-                console.error('[modlens] download-local failed', err)
+                console.error('[visionforge] download-local failed', err)
                 toast('本地保存失败：' + (err && err.message ? err.message : err))
               })
           } catch (err) {
-            console.error('[modlens] downloadLocal error', err)
+            console.error('[visionforge] downloadLocal error', err)
           }
         }
         // The zoom button duplicates clicking the image itself, so hide it.
@@ -1723,7 +1723,7 @@ window.__ModuleLoader__.load({
           function (event) {
             var target = event.target
             if (!target || !target.closest) return
-            var img = target.closest('img[src*="/modlens/image"], img[data-vf-src]')
+            var img = target.closest('img[src*="/visionforge/image"], img[data-vf-src]')
             if (img) {
               event.preventDefault()
               event.stopPropagation()
@@ -1776,7 +1776,7 @@ window.__ModuleLoader__.load({
           true,
         )
       } catch (error) {
-        console.error('[modlens] preview styles skipped: ' + error)
+        console.error('[visionforge] preview styles skipped: ' + error)
       }
     }
 
@@ -1792,7 +1792,7 @@ window.__ModuleLoader__.load({
             document.removeEventListener('paste', onPaste, true)
             document.removeEventListener('focusin', onFocusIn, true)
           },
-          'modlens: paste-to-path listener',
+          'visionforge: paste-to-path listener',
         )
       }
     }
