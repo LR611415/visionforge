@@ -504,7 +504,7 @@ function startRenderServer() {
             reveal.unref()
           } catch { /* reveal is a nicety */ }
           res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'access-control-allow-origin': '*' })
-          res.end(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>VisionForge 保存成功</title><body style="font-family:system-ui;padding:24px"><h2 style="color:#166534">保存成功</h2><p>文件：${dest}</p><p>已在资源管理器中定位该文件。</p></body></html>`)
+          res.end(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>VisionForge 保存成功</title><body style="font-family:system-ui;padding:24px"><h2 style="color:#166534">保存成功</h2><p>文件：${dest}</p><p>已在资源管理器中定位该文件。</p><script>setTimeout(function(){try{window.close()}catch(e){}},900)</script></body></html>`)
           return
         }
         const ext = extname(file).toLowerCase()
