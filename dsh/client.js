@@ -248,25 +248,39 @@ window.__ModuleLoader__.load({
     }
 
     // ---- 生成图：预览样式 + 点击系统查看器 + 下载本地保存 ----------------------
-    function openSystemViewer(path) {
-      fetch('/visionforge/open?path=' + encodeURIComponent(path), { method: 'GET' }).catch(function () {})
+    // 基于缩略图 src 的 loopback origin 构造完整 URL（页面 origin 不是 loopback，
+    // 相对路径会 404 —— 老版本 ef6c3a9 用 src.origin + /open，这是可用机制）。
+    function openSystemViewer(src) {
+      try {
+        var u = new URL(src)
+        var p = u.searchParams.get('path')
+        if (!p) return
+        fetch(u.origin + '/visionforge/open?path=' + encodeURIComponent(p), { method: 'GET' }).catch(function () {})
+      } catch (err) { /* ignore malformed src */ }
     }
 
-    function downloadLocal(path) {
-      fetch('/visionforge/download-local?path=' + encodeURIComponent(path), { method: 'GET' })
-        .then(function (r) {
-          if (!r.ok) throw new Error('HTTP ' + r.status)
-          return r.json()
-        })
-        .then(function (j) {
-          if (j && j.file) {
-            showToast('已保存到 ' + j.file)
-          }
-        })
-        .catch(function (error) {
-          console.error('[visionforge] download failed: ' + error)
-          showToast('下载失败：' + error.message)
-        })
+    // 基于链接/缩略图 src 的 loopback origin 构造完整 URL；服务端 /visionforge/download-local
+    // 返回 JSON（复制到 D 盘根 + 定位），不经过宿主侧边栏。
+    function downloadLocal(src) {
+      try {
+        var u = new URL(src)
+        var p = u.searchParams.get('path')
+        if (!p) return
+        fetch(u.origin + '/visionforge/download-local?path=' + encodeURIComponent(p), { method: 'GET' })
+          .then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status)
+            return r.json()
+          })
+          .then(function (j) {
+            if (j && j.file) showToast('已保存到 ' + j.file)
+          })
+          .catch(function (error) {
+            console.error('[visionforge] download failed: ' + error)
+            showToast('下载失败：' + (error && error.message ? error.message : error))
+          })
+      } catch (err) {
+        console.error('[visionforge] downloadLocal error', err)
+      }
     }
 
     var toastTimer = null
@@ -316,7 +330,7 @@ window.__ModuleLoader__.load({
               try {
                 fetch('/visionforge/click-debug?path=' + encodeURIComponent(path), { method: 'GET' }).catch(function () {})
               } catch (err) { /* diagnostic is best-effort */ }
-              openSystemViewer(path)
+              openSystemViewer(el.getAttribute('src') || '')
               return
             }
             el = el.parentNode
@@ -339,19 +353,17 @@ window.__ModuleLoader__.load({
         hideZoom()
         setInterval(hideZoom, 4000)
 
-        // 下载链接（/visionforge/download 与 /visionforge/download-local）被宿主
-        // 渲染成按钮时，统一改走本地保存（复制到 D 盘根并定位）。
+        // 下载/保存链接（/visionforge/download、download-local、save-local）被宿主渲染成按钮时，
+        // 统一改走本地保存（复制到 D 盘根并定位，不经过宿主侧边栏）。
         document.addEventListener('click', function (event) {
           var anchor = event.target
           while (anchor && anchor.tagName !== 'A') anchor = anchor.parentNode
           if (!anchor) return
           var href = anchor.getAttribute('href') || ''
-          if (!/visionforge\/(download|download-local)/.test(href)) return
-          var m = href.match(/[?&]path=([^&]+)/)
-          if (!m) return
+          if (!/visionforge\/(download|download-local|save-local)/.test(href)) return
           event.preventDefault()
           event.stopPropagation()
-          downloadLocal(decodeURIComponent(m[1]))
+          downloadLocal(href)
         }, true)
       } catch (error) {
         console.error('[visionforge] preview styles skipped: ' + error)

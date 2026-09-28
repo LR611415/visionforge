@@ -449,6 +449,7 @@ function startRenderServer() {
         const isDownload = url.pathname === '/visionforge/download'
         const isOpen = url.pathname === '/visionforge/open'
         const isSaveLocal = url.pathname === '/visionforge/save-local'
+        const isDownloadLocal = url.pathname === '/visionforge/download-local'
         const isClickDebug = url.pathname === '/visionforge/click-debug'
         if (isClickDebug) {
           // 诊断：client.js 点击捕获命中后上报，用于定位"点图无反应"卡在哪一环。
@@ -460,7 +461,7 @@ function startRenderServer() {
           res.end('{"ok":true}')
           return
         }
-        if (!isImage && !isDownload && !isOpen && !isSaveLocal) {
+        if (!isImage && !isDownload && !isOpen && !isSaveLocal && !isDownloadLocal) {
           res.writeHead(404).end('not found')
           return
         }
@@ -488,6 +489,36 @@ function startRenderServer() {
           } catch { /* open is a nicety */ }
           res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'access-control-allow-origin': '*' })
           res.end(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>VisionForge 已打开</title><body style="font-family:system-ui;padding:24px"><h2 style="color:#166534">已在系统图片查看器中打开</h2><p>文件：${file}</p></body></html>`)
+          return
+        }
+        if (isDownloadLocal) {
+          // JSON API：client.js 拦截下载按钮后调用（复制缓存到 D 盘根 + 定位 + 返回 JSON，
+          // 不经过宿主侧边栏）。save-local 保留为兜底页面。
+          const base = basename(file)
+          const ext = extname(file)
+          const root = existsSync('D:\\') ? 'D:\\' : join(homedir(), 'VisionForge')
+          let dest = join(root, base)
+          if (dest !== file && existsSync(dest)) {
+            const ts = new Date().toISOString().replace(/[:.]/g, '-')
+            const stem = base.slice(0, base.length - ext.length) || 'visionforge'
+            dest = join(dirname(dest), `${stem}-${ts}${ext}`)
+          }
+          const parent = dirname(dest)
+          if (!existsSync(parent)) mkdirSync(parent, { recursive: true })
+          copyFileSync(file, dest)
+          try {
+            const reveal = spawn('explorer.exe', ['/select,' + dest], { detached: true, stdio: 'ignore' })
+            reveal.on('error', () => {
+              try {
+                const fb = spawn('cmd.exe', ['/c', 'start', '', dirname(dest)], { detached: true, stdio: 'ignore' })
+                fb.on('error', () => {})
+                fb.unref()
+              } catch { /* nicety */ }
+            })
+            reveal.unref()
+          } catch { /* reveal is a nicety */ }
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*' })
+          res.end(JSON.stringify({ ok: true, file: dest }))
           return
         }
         if (isSaveLocal) {
