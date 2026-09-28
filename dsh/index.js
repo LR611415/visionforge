@@ -384,6 +384,7 @@ function ensureSavedToRoot(file) {
     const root = existsSync('D:\\') ? 'D:\\' : join(homedir(), 'VisionForge')
     let dest = join(root, base)
     if (dest !== file && existsSync(dest)) {
+      try { if (statSync(dest).size === statSync(file).size) return dest } catch { /* fallthrough */ }
       const ts = new Date().toISOString().replace(/[:.]/g, '-')
       const stem = base.slice(0, base.length - ext.length) || 'visionforge'
       dest = join(dirname(dest), `${stem}-${ts}${ext}`)
@@ -408,8 +409,8 @@ function buildPreviewMarkdown(value) {
     const saved = typeof fp === 'string' ? ensureSavedToRoot(fp) : null
     const open = saved ? `file:///${encodeURI(saved.replace(/\\/g, '/'))}` : null
     const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
-    const thumb = open ?? local ?? u
-    // 缩略图直接加载已保存到 D 盘的本地原图（file://），点击图片由 DSH 宿主原生处理（放大/打开），不经过链接跳转与侧边栏
+    const thumb = local ?? u
+    // 缩略图通过本地回环服务加载（渲染器可显示），点击图片由 DSH 宿主原生处理（放大/打开）；已保存副本用 file:// 链接打开系统查看器，不经过侧边栏
     const dl = open ? ` [已保存到 D 盘，点击打开](${open})` : ''
     lines.push(`![生成图 ${i + 1}](${thumb})${dl}`)
   })
@@ -430,9 +431,10 @@ function renderGenText(value) {
     if (saved) savedMap.set(fp, saved)
     const open = saved ? `file:///${encodeURI(saved.replace(/\\/g, '/'))}` : null
     const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
-    const thumb = open ?? local ?? u
-    // 缩略图直接加载已保存到 D 盘的本地原图（file://），点击图片由 DSH 宿主原生处理（放大/打开），不经过链接跳转与侧边栏
-    lines.push(`![生成图 ${i + 1}](${thumb})`)
+    const thumb = local ?? u
+    // 缩略图通过本地回环服务加载（渲染器可显示），点击图片由 DSH 宿主原生处理（放大/打开）；已保存副本用 file:// 链接打开系统查看器，不经过侧边栏
+    const dl = open ? ` [已保存到 D 盘，点击打开](${open})` : ''
+    lines.push(`![生成图 ${i + 1}](${thumb})${dl}`)
   })
   if (urls.length > 0 || files.length > 0) {
     const savedLines = files.map((fp) => {
