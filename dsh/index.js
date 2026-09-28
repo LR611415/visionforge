@@ -389,9 +389,11 @@ function buildPreviewMarkdown(value) {
     const fp = files[i]
     const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
     const thumb = local ?? u
-    // 缩略图经本地回环服务加载（渲染器可显示）；[Image: source: ...] 是 DSH 原生图片占位符，点击图片由宿主放大预览
-    lines.push(`![生成图 ${i + 1}](${thumb})`)
-    if (typeof fp === 'string') lines.push(`[Image: source: ${fp}]`)
+    // DSH 渲染器不渲染嵌套链接内的图片，所以缩略图是普通 img，放大/保存用独立链接。
+    // 放大 -> /open -> cmd start 系统图片查看器（绕开 DSH 打开方式）；保存 -> /save-local -> 复制到 D 盘 + 资源管理器定位。
+    const zoom = port > 0 && typeof fp === 'string' ? ` [🔍 放大](http://127.0.0.1:${port}/visionforge/open?path=${encodeURIComponent(fp)})` : ''
+    const dl = port > 0 && typeof fp === 'string' ? ` [保存图片 ${i + 1} 到 D 盘](http://127.0.0.1:${port}/visionforge/save-local?path=${encodeURIComponent(fp)})` : ''
+    lines.push(`![生成图 ${i + 1}](${thumb})${zoom}${dl}`)
   })
   return lines.join('\n')
 }
@@ -407,9 +409,10 @@ function renderGenText(value) {
     const fp = files[i]
     const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
     const thumb = local ?? u
-    // 缩略图经本地回环服务加载（渲染器可显示）；[Image: source: ...] 是 DSH 原生图片占位符，点击图片由宿主放大预览
-    lines.push(`![生成图 ${i + 1}](${thumb})`)
-    if (typeof fp === 'string') lines.push(`[Image: source: ${fp}]`)
+    // DSH 渲染器不渲染嵌套链接内的图片，所以缩略图是普通 img，放大/保存用独立链接。
+    // 放大 -> /open -> cmd start 系统图片查看器（绕开 DSH 打开方式）；保存 -> /save-local -> 复制到 D 盘 + 资源管理器定位。
+    const zoom = port > 0 && typeof fp === 'string' ? ` [🔍 放大](http://127.0.0.1:${port}/visionforge/open?path=${encodeURIComponent(fp)})` : ''
+    lines.push(`![生成图 ${i + 1}](${thumb})${zoom}`)
   })
   if (port > 0 && files.length > 0) {
     lines.push('')
@@ -418,7 +421,7 @@ function renderGenText(value) {
     })
   }
   if (urls.length > 0 || files.length > 0) {
-    lines.push('', '【展示给用户】请在最终回复正文中【原样、完整】复制上面这一整段：生成图 1 预览（[![生成图 N](缩略图)](本地预览地址)，对话里显示小图；[Image: source: <路径>] 行让点击图片在宿主中放大）和保存按钮（点击后复制到 D 盘根目录并在资源管理器中定位）。禁止只列文件路径；禁止把临时 URL 单独贴成文本或链接。')
+    lines.push('', '【展示给用户】请在最终回复正文中【原样、完整】复制上面这一整段：生成图 1 预览（缩略图在对话中显示小图；[🔍 放大] 点击在电脑系统图片查看器中打开原图并放大）和保存按钮（点击后复制到 D 盘根目录并在资源管理器中定位）。禁止只列文件路径；禁止把临时 URL 单独贴成文本或链接。')
   }
   if (typeof v.provider === 'string') lines.push(`Provider: ${v.provider}`)
   if (typeof v.model === 'string') lines.push(`Model: ${v.model}`)
@@ -468,8 +471,8 @@ function startRenderServer() {
             child.on('error', () => {})
             child.unref()
           } catch { /* open is a nicety */ }
-          res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' })
-          res.end(JSON.stringify({ ok: true, file }))
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'access-control-allow-origin': '*' })
+          res.end(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>VisionForge 已打开</title><body style="font-family:system-ui;padding:24px"><h2 style="color:#166534">已在系统图片查看器中打开</h2><p>文件：${file}</p></body></html>`)
           return
         }
         if (isSaveLocal) {
