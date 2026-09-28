@@ -45,8 +45,7 @@
         "node": ">=22.19"
     },
     "dependencies": {
-        "commander": "^13.1.0",
-        "undici": "^6.29.0"
+        "commander": "^13.1.0"
     },
     "exports": {
         ".": "./dsh/index.js",

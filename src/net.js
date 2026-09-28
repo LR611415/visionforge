@@ -1,17 +1,25 @@
-// net.js — 网络层：远程图 SSRF 防护 + apiFetch（方案 A 安全区自研重写）
+// net.js — 网络层：远程图 SSRF 防护 + apiFetch（Node 原生实现，不依赖第三方 undici）
 //
-// 行为契约与 dist L93-521 对齐：
+// 行为契约（与上游 dist 对齐，重写为 Node 原生 http/https）：
 //   - 远程图仅 http/https，禁内嵌凭据；
 //   - 主机名字面黑名单 + DNS 全记录逐一私网判定（IPv4/IPv6 含 ::ffff: 映射）；
-//   - 下载连接用固定解析结果的 dispatcher 防 rebinding；手工重定向链逐跳重新校验；
+//   - 下载连接用固定解析结果的 lookup 防 rebinding；手工重定向链逐跳重新校验；
 //   - 25 MiB 上限，流式读取封顶；
 //   - apiFetch 负责代理解析（显式 proxy / HTTPS_PROXY 等环境变量 / 直连）
-//     与连接失败的可读提示（UND_ERR_CONNECT_TIMEOUT 等）。
+//     与连接失败的可读提示（ENOTFOUND/ECONNREFUSED/ETIMEDOUT 等）。
+//
+// 为什么不用 npm undici：DSH 只要求 node >= 22，而 Node 22/24/25 的 http/https
+// 标准库 API 稳定不变；npm undici 的 dispatcher 必须与 Node 内置 undici 版本匹配，
+// 版本不一致会报 UND_ERR_INVALID_ARG。插件不应对 Node 内部版本有任何耦合——
+// 本文件全部使用 Node 标准库，插件只随 DSH（harness）大版本迭代维护。
 
 import * as dns from 'dns';
 import * as fs from 'fs';
+import * as http from 'http';
+import * as https from 'https';
+import { Readable } from 'stream';
 import { isIP } from 'net';
-import { Agent, EnvHttpProxyAgent, ProxyAgent } from 'undici';
+import { URL } from 'url';
 
 const BLOCKED_HOSTNAMES = new Set(['localhost', 'localhost.localdomain', 'metadata.google.internal', 'metadata.amazonaws.com', 'metadata.azure.internal']);
 
@@ -281,117 +289,320 @@ export function readLocalImageBase64(filePath) {
 }
 
 // ---------------------------------------------------------------------------
+// 原生 GET（带固定 lookup / 中止信号）
+// ---------------------------------------------------------------------------
+
+function rawGet(url, options) {
+    return new Promise((resolve, reject) => {
+        let parsed;
+        try {
+            parsed = new URL(url);
+        } catch (error) {
+            reject(error);
+            return;
+        }
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            reject(new Error('Only http/https URLs are supported.'));
+            return;
+        }
+        const mod = parsed.protocol === 'https:' ? https : http;
+        const reqOptions = {
+            method: 'GET',
+            hostname: parsed.hostname,
+            port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+            path: parsed.pathname + parsed.search,
+            headers: {},
+        };
+        if (options.lookup) {
+            reqOptions.lookup = options.lookup;
+        }
+        const req = mod.request(reqOptions, (res) => resolve(res));
+        req.on('error', (error) => reject(error));
+        if (options.signal) {
+            const onAbort = () => {
+                const reason = options.signal.reason instanceof Error ? options.signal.reason : new Error('The operation was aborted due to timeout');
+                req.destroy(reason);
+            };
+            if (options.signal.aborted) {
+                onAbort();
+            } else {
+                options.signal.addEventListener('abort', onAbort, { once: true });
+            }
+        }
+        req.end();
+    });
+}
+
+// ---------------------------------------------------------------------------
 // 远程图下载：逐跳 SSRF 校验 + 固定解析结果防 rebinding
 // ---------------------------------------------------------------------------
 
 const MAX_REDIRECTS = 5;
 
-function pinnedDispatcher(pinned) {
-    return new Agent({
-        connect: {
-            lookup: (_hostname, options, callback) => {
+function readCappedNative(response, url) {
+    return new Promise((resolve, reject) => {
+        const chunks = [];
+        let total = 0;
+        let settled = false;
+        response.on('data', (chunk) => {
+            if (settled) {
+                return;
+            }
+            total += chunk.length;
+            if (total > MAX_REMOTE_IMAGE_BYTES) {
+                settled = true;
+                response.destroy();
+                reject(new Error(`Remote image exceeds the ${MAX_REMOTE_IMAGE_BYTES}-byte limit: ${safeUrl(url)}`));
+                return;
+            }
+            chunks.push(chunk);
+        });
+        response.on('end', () => {
+            if (!settled) {
+                settled = true;
+                resolve(Buffer.concat(chunks));
+            }
+        });
+        response.on('error', (error) => {
+            if (!settled) {
+                settled = true;
+                reject(error);
+            }
+        });
+    });
+}
+
+/** 拉取远程图并做魔数校验，返回 base64 + mimeType。直连（SSRF 防护优先，不走代理）。 */
+export async function fetchRemoteImageBase64(url, timeoutMs) {
+    const signal = AbortSignal.timeout(timeoutMs);
+    let current = normalizeRemoteImageUrl(url);
+    try {
+        for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+            const pinned = await assertSafeRemoteTarget(current);
+            const lookup = (hostname, options, callback) => {
                 const record = { address: pinned.address, family: pinned.family };
                 if (options && options.all) {
                     callback(null, [record]);
                 } else {
                     callback(null, pinned.address, pinned.family);
                 }
-            },
-        },
-    });
-}
-
-async function readCapped(response, url) {
-    const body = response.body;
-    if (!body) {
-        const buffer = Buffer.from(await response.arrayBuffer());
-        if (buffer.length > MAX_REMOTE_IMAGE_BYTES) {
-            throw new Error(`Remote image exceeds the ${MAX_REMOTE_IMAGE_BYTES}-byte limit: ${safeUrl(url)}`);
-        }
-        return buffer;
-    }
-    const reader = body.getReader();
-    const chunks = [];
-    let total = 0;
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-            break;
-        }
-        total += value.byteLength;
-        if (total > MAX_REMOTE_IMAGE_BYTES) {
-            await reader.cancel();
-            throw new Error(`Remote image exceeds the ${MAX_REMOTE_IMAGE_BYTES}-byte limit: ${safeUrl(url)}`);
-        }
-        chunks.push(Buffer.from(value));
-    }
-    return Buffer.concat(chunks);
-}
-
-/** 拉取远程图并做魔数校验，返回 base64 + mimeType。 */
-export async function fetchRemoteImageBase64(url, timeoutMs) {
-    const signal = AbortSignal.timeout(timeoutMs);
-    let current = normalizeRemoteImageUrl(url);
-    const dispatchers = [];
-    try {
-        for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-            const pinned = await assertSafeRemoteTarget(current);
-            const dispatcher = pinnedDispatcher(pinned);
-            dispatchers.push(dispatcher);
-            const response = await fetch(current, { method: 'GET', redirect: 'manual', signal, dispatcher });
-            if (response.status >= 300 && response.status < 400) {
-                const location = response.headers.get('location');
+            };
+            const response = await rawGet(current.toString(), { signal, lookup });
+            if (response.statusCode >= 300 && response.statusCode < 400) {
+                const location = response.headers.location;
+                response.destroy();
                 if (!location) {
-                    await response.body?.cancel().catch(() => {});
-                    throw new Error(`Redirect response (${response.status}) missing location header: ${safeUrl(current.toString())}`);
+                    throw new Error(`Redirect response (${response.statusCode}) missing location header: ${safeUrl(current.toString())}`);
                 }
-                await response.body?.cancel();
                 if (hop === MAX_REDIRECTS) {
                     throw new Error(`Too many redirects (max ${MAX_REDIRECTS}): ${safeUrl(url)}`);
                 }
                 current = normalizeRemoteImageUrl(new URL(location, current).toString());
                 continue;
             }
-            if (!response.ok) {
-                await response.body?.cancel().catch(() => {});
-                throw new Error(`Failed to download image (${response.status}): ${safeUrl(current.toString())}`);
+            if (response.statusCode < 200 || response.statusCode >= 300) {
+                response.destroy();
+                throw new Error(`Failed to download image (${response.statusCode}): ${safeUrl(current.toString())}`);
             }
-            const declaredLength = Number(response.headers.get('content-length'));
+            const declaredLength = Number(response.headers['content-length']);
             if (Number.isFinite(declaredLength) && declaredLength > MAX_REMOTE_IMAGE_BYTES) {
-                await response.body?.cancel().catch(() => {});
+                response.destroy();
                 throw new Error(`Remote image is ${declaredLength} bytes, over the ${MAX_REMOTE_IMAGE_BYTES}-byte limit: ${safeUrl(current.toString())}`);
             }
             const finalUrl = current.toString();
-            const buffer = await readCapped(response, finalUrl);
+            const buffer = await readCappedNative(response, finalUrl);
             const mimeType = resolveImageMime(buffer, safeUrl(finalUrl));
             return { data: buffer.toString('base64'), mimeType };
         }
         throw new Error(`Too many redirects (max ${MAX_REDIRECTS}): ${safeUrl(url)}`);
     } finally {
-        await Promise.allSettled(dispatchers.map((dispatcher) => dispatcher.close()));
+        signal.clear?.();
     }
 }
 
 // ---------------------------------------------------------------------------
-// apiFetch：代理解析 + 连接失败提示
+// apiFetch：原生实现（显式 proxy > 环境变量代理 > 直连）
 // ---------------------------------------------------------------------------
 
-function apiProxyDispatcher(explicitProxy, env) {
+function resolveProxy(explicitProxy, env) {
     if (explicitProxy !== undefined) {
-        const proxy = explicitProxy.trim();
-        return proxy ? new ProxyAgent(proxy) : undefined;
+        const proxy = String(explicitProxy).trim();
+        return proxy || undefined;
     }
-    if (env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy) {
-        return new EnvHttpProxyAgent();
-    }
-    return undefined;
+    const fromEnv = env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy;
+    return fromEnv && String(fromEnv).trim() ? String(fromEnv).trim() : undefined;
 }
 
-const CONNECT_CODES = new Set(['UND_ERR_CONNECT_TIMEOUT', 'ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EHOSTUNREACH', 'ENETUNREACH', 'ETIMEDOUT']);
+function toPlainHeaders(headers) {
+    if (!headers) {
+        return {};
+    }
+    if (typeof Headers !== 'undefined' && headers instanceof Headers) {
+        const out = {};
+        headers.forEach((value, key) => {
+            out[key] = value;
+        });
+        return out;
+    }
+    return { ...headers };
+}
+
+function proxyBasicAuth(proxyUrl) {
+    if (proxyUrl.username || proxyUrl.password) {
+        return 'Basic ' + Buffer.from(`${decodeURIComponent(proxyUrl.username)}:${decodeURIComponent(proxyUrl.password)}`).toString('base64');
+    }
+    return null;
+}
+
+function attachAbortAndBody(req, init) {
+    const signal = init.signal;
+    if (signal) {
+        const onAbort = () => {
+            const reason = signal.reason instanceof Error ? signal.reason : new Error('The operation was aborted due to timeout');
+            req.destroy(reason);
+        };
+        if (signal.aborted) {
+            onAbort();
+        } else {
+            signal.addEventListener('abort', onAbort, { once: true });
+        }
+    }
+    const body = init.body;
+    if (body != null) {
+        req.write(Buffer.isBuffer(body) ? body : String(body));
+    }
+    req.end();
+}
+
+function wrapNativeResponse(res) {
+    const headers = new Headers();
+    for (const [key, value] of Object.entries(res.headers)) {
+        if (Array.isArray(value)) {
+            for (const item of value) {
+                headers.append(key, item);
+            }
+        } else if (value !== undefined) {
+            headers.set(key, String(value));
+        }
+    }
+    const webBody = Readable.toWeb(res);
+    return new Response(webBody, {
+        status: res.statusCode || 0,
+        statusText: res.statusMessage || '',
+        headers,
+    });
+}
+
+function rawApiRequest(url, init, proxy) {
+    return new Promise((resolve, reject) => {
+        let parsed;
+        try {
+            parsed = new URL(url);
+        } catch (error) {
+            reject(error);
+            return;
+        }
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            reject(new Error('Only http/https URLs are supported.'));
+            return;
+        }
+        const isHttps = parsed.protocol === 'https:';
+        const method = init.method || 'GET';
+        const headers = toPlainHeaders(init.headers);
+        const body = init.body;
+        if (body != null && !Object.prototype.hasOwnProperty.call(headers, 'Content-Length')) {
+            const length = Buffer.isBuffer(body) ? body.length : Buffer.byteLength(String(body));
+            headers['Content-Length'] = String(length);
+        }
+        const reqOptions = {
+            method,
+            headers,
+            hostname: parsed.hostname,
+            port: parsed.port || (isHttps ? 443 : 80),
+            path: parsed.pathname + parsed.search,
+        };
+        const handleResponse = (res) => {
+            try {
+                resolve(wrapNativeResponse(res));
+            } catch (error) {
+                res.destroy();
+                reject(error);
+            }
+        };
+
+        if (proxy) {
+            let proxyParsed;
+            try {
+                proxyParsed = new URL(proxy);
+            } catch (error) {
+                reject(new Error(`Invalid proxy URL: ${proxy}`));
+                return;
+            }
+            if (proxyParsed.protocol !== 'http:' && proxyParsed.protocol !== 'https:') {
+                reject(new Error(`Unsupported proxy protocol: ${proxyParsed.protocol}`));
+                return;
+            }
+            const proxyPort = Number(proxyParsed.port) || (proxyParsed.protocol === 'https:' ? 443 : 80);
+            const auth = proxyBasicAuth(proxyParsed);
+            if (isHttps) {
+                // CONNECT 隧道
+                const connectHeaders = { Host: `${parsed.hostname}:${parsed.port || 443}` };
+                if (auth) {
+                    connectHeaders['Proxy-Authorization'] = auth;
+                }
+                const connectReq = http.request({
+                    hostname: proxyParsed.hostname,
+                    port: proxyPort,
+                    method: 'CONNECT',
+                    path: `${parsed.hostname}:${parsed.port || 443}`,
+                    headers: connectHeaders,
+                });
+                connectReq.on('connect', (res, socket) => {
+                    if (res.statusCode !== 200) {
+                        socket.destroy();
+                        reject(new Error(`Proxy CONNECT failed with status ${res.statusCode}`));
+                        return;
+                    }
+                    const req = https.request({
+                        ...reqOptions,
+                        agent: false,
+                        createConnection: () => socket,
+                    }, handleResponse);
+                    req.on('error', (error) => reject(error));
+                    attachAbortAndBody(req, init);
+                });
+                connectReq.on('error', (error) => reject(error));
+                attachAbortAndBody(connectReq, { signal: init.signal });
+            } else {
+                // http 目标走代理：向代理发送绝对 URL
+                const proxiedHeaders = { ...headers, Host: parsed.host };
+                if (auth) {
+                    proxiedHeaders['Proxy-Authorization'] = auth;
+                }
+                const req = http.request({
+                    hostname: proxyParsed.hostname,
+                    port: proxyPort,
+                    method,
+                    path: parsed.href,
+                    headers: proxiedHeaders,
+                }, handleResponse);
+                req.on('error', (error) => reject(error));
+                attachAbortAndBody(req, init);
+            }
+        } else {
+            const mod = isHttps ? https : http;
+            const req = mod.request(reqOptions, handleResponse);
+            req.on('error', (error) => reject(error));
+            attachAbortAndBody(req, init);
+        }
+    });
+}
+
+const CONNECT_CODES = new Set(['UND_ERR_CONNECT_TIMEOUT', 'ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EHOSTUNREACH', 'ENETUNREACH', 'ETIMEDOUT', 'EPIPE', 'ECONNABORTED', 'EAI_AGAIN', 'EPROTO']);
 
 function connectFailureHint(error, url) {
-    const cause = error instanceof Error ? error.cause : undefined;
-    if (!cause?.code || !CONNECT_CODES.has(cause.code)) {
+    const code = (error && error.code) || (error && error.cause && error.cause.code);
+    if (!code || !CONNECT_CODES.has(code)) {
         return null;
     }
     let host;
@@ -400,7 +611,7 @@ function connectFailureHint(error, url) {
     } catch {
         return null;
     }
-    return `Could not connect to ${host} (${cause.code}). The request never reached the network. If this machine reaches the internet through a proxy, set HTTPS_PROXY/HTTP_PROXY, or run: visionforge config set proxy <url>`;
+    return `Could not connect to ${host} (${code}). The request never reached the network. If this machine reaches the internet through a proxy, set HTTPS_PROXY/HTTP_PROXY, or run: visionforge config set proxy <url>`;
 }
 
 function bodyFailedResponse(response, error) {
@@ -417,19 +628,16 @@ function bodyFailedResponse(response, error) {
 
 /** 统一 API 调用：显式 proxy > 环境变量代理 > 直连；连接失败给可读提示。 */
 export async function apiFetch(url, init, proxy, env = process.env) {
-    const dispatcher = apiProxyDispatcher(proxy, env) ?? new Agent();
+    const effectiveProxy = resolveProxy(proxy, env);
     try {
-        const response = await fetch(url, { ...init, dispatcher });
+        const response = await rawApiRequest(url, init, effectiveProxy);
         try {
             const buffered = Buffer.from(await response.arrayBuffer());
-            await dispatcher.close();
             return new Response(buffered, { status: response.status, statusText: response.statusText, headers: response.headers });
         } catch (bodyError) {
-            await dispatcher.close().catch(() => {});
             return bodyFailedResponse(response, bodyError);
         }
     } catch (error) {
-        await dispatcher.close().catch(() => {});
         const hint = connectFailureHint(error, url);
         throw hint ? new Error(hint, { cause: error }) : error;
     }
