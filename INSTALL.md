@@ -25,7 +25,7 @@ that has DeepSeek Harness (desktop or web) installed. If the target machine has
 no `~/.dsh/` directory and no DeepSeek Harness app, installation is not possible;
 tell the user that.
 
-> **Supported environment**: DSH Desktop v2.0.14 / dsh harness 0.1.7-rc.1
+> **Supported environment**: DSH Desktop v2.0.14 / dsh harness 0.1.7-rc.2
 > (verified 2026-09). Newer major releases may change plugin interfaces; if a
 > step fails in a way this document does not cover, report the exact error text.
 
@@ -70,28 +70,28 @@ npx -y @deepseek-ai/dsh plugin --profile <profile> add @lr611/visionforge
 
 ### Path B: local copy (before publishing, or offline)
 
-VisionForge is a directory with `dsh/`, `dist/`, `package.json` and
+VisionForge is a directory with `dsh/`, `src/`, `skills/`, `package.json` and
 `cordis.patch.yml`. Copy the whole directory into the profile's plugin
-dependencies. If the upstream `@liustack/modlens` package is already installed,
-**overwrite its files** with the VisionForge ones (same paths, same layout):
+dependencies. If `@lr611/visionforge` is NOT installed yet, declare it first so
+dsh loads the plugin:
+
+```bash
+npx -y @deepseek-ai/dsh plugin --profile <profile> add @lr611/visionforge
+```
+
+then overwrite its files with the local VisionForge ones (same paths, same layout):
 
 ```powershell
 $src = "<path to the VisionForge folder>"
-$dst = "$env:USERPROFILE\.dsh\profiles\<profile>\node_modules\@liustack\modlens"
+$dst = "$env:USERPROFILE\.dsh\profiles\<profile>\node_modules\@lr611\visionforge"
 Copy-Item -Recurse -Force "$src\dsh" "$dst\dsh"
-Copy-Item -Force "$src\dist\main.js" "$dst\dist\main.js"
+Copy-Item -Force "$src\src\index.js" "$dst\src\index.js"
 Copy-Item -Force "$src\cordis.patch.yml" "$dst\cordis.patch.yml"
 Copy-Item -Force "$src\package.json" "$dst\package.json"
 ```
 
-If `@liustack/modlens` is NOT installed yet, declare it so dsh loads the plugin:
-
-```bash
-npx -y @deepseek-ai/dsh plugin --profile <profile> add @liustack/modlens
-```
-
-(then overwrite the files as above and re-run the declare command, or edit the
-profile's `cordis.yml` / `cordis.patch.yml` to include `@liustack/modlens`).
+> 不要覆盖 `@liustack/modlens` 官方包——VisionForge 是独立包 `@lr611/visionforge`，
+> 与官方互不干扰。若两者同时存在，工具名不同不会冲突。
 
 **After either path**, tell the user to **fully restart dsh**, then check the
 model selector: entries suffixed `(modlens vision)` mean the plugin is live.
