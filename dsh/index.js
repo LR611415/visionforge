@@ -389,11 +389,13 @@ function buildPreviewMarkdown(value) {
     const fp = files[i]
     const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
     const thumb = local ?? u
-    // DSH 渲染器不渲染嵌套链接内的图片，所以缩略图是普通 img，放大/保存用独立链接。
-    // 放大 -> /open -> cmd start 系统图片查看器（绕开 DSH 打开方式）；保存 -> /save-local -> 复制到 D 盘 + 资源管理器定位。
-    const zoom = port > 0 && typeof fp === 'string' ? ` [🔍 放大](http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)})` : ''
+    const img = `![生成图 ${i + 1}](${thumb})`
+    // file:// 链接：DSH 宿主识别 file:// 并调用系统关联应用（系统图片查看器）打开，不经过侧边栏。
+    // 缩略图本身点击 DSH 宿主无放大处理（已多轮验证），放大入口走 file:// 链接文字。
+    const openLink = typeof fp === 'string' ? `file:///${encodeURI(fp.replace(/\\/g, '/'))}` : null
+    const zoom = openLink ? ` [点击放大查看（系统图片查看器）](${openLink})` : ''
     const dl = port > 0 && typeof fp === 'string' ? ` [保存图片 ${i + 1} 到 D 盘](http://127.0.0.1:${port}/visionforge/save-local?path=${encodeURIComponent(fp)})` : ''
-    lines.push(`![生成图 ${i + 1}](${thumb})${zoom}${dl}`)
+    lines.push(`${img}${zoom}${dl}`)
   })
   return lines.join('\n')
 }
@@ -409,10 +411,11 @@ function renderGenText(value) {
     const fp = files[i]
     const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
     const thumb = local ?? u
-    // DSH 渲染器不渲染嵌套链接内的图片，所以缩略图是普通 img，放大/保存用独立链接。
-    // 放大 -> /open -> cmd start 系统图片查看器（绕开 DSH 打开方式）；保存 -> /save-local -> 复制到 D 盘 + 资源管理器定位。
-    const zoom = port > 0 && typeof fp === 'string' ? ` [🔍 放大](http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)})` : ''
-    lines.push(`![生成图 ${i + 1}](${thumb})${zoom}`)
+    const img = `![生成图 ${i + 1}](${thumb})`
+    // file:// 链接：DSH 宿主识别 file:// 并调用系统关联应用（系统图片查看器）打开，不经过侧边栏。
+    const openLink = typeof fp === 'string' ? `file:///${encodeURI(fp.replace(/\\/g, '/'))}` : null
+    const zoom = openLink ? ` [点击放大查看（系统图片查看器）](${openLink})` : ''
+    lines.push(`${img}${zoom}`)
   })
   if (port > 0 && files.length > 0) {
     lines.push('')
@@ -421,7 +424,7 @@ function renderGenText(value) {
     })
   }
   if (urls.length > 0 || files.length > 0) {
-    lines.push('', '【展示给用户】请在最终回复正文中【原样、完整】复制上面这一整段：生成图 1 预览（缩略图在对话中显示小图；[🔍 放大] 点击按系统链接设置打开原图，浏览器中可放大并可右键另存）和保存按钮（点击后复制到 D 盘根目录并在资源管理器中定位）。禁止只列文件路径；禁止把临时 URL 单独贴成文本或链接。')
+    lines.push('', '【展示给用户】请在最终回复正文中【原样、完整】复制上面这一整段：生成图 1 预览（缩略图在对话中显示小图；[点击放大查看（系统图片查看器）] 点击用系统图片查看器打开原图放大，不经过侧边栏）和保存按钮（点击后复制到 D 盘根目录并在资源管理器中定位）。禁止只列文件路径；禁止把临时 URL 单独贴成文本或链接。')
   }
   if (typeof v.provider === 'string') lines.push(`Provider: ${v.provider}`)
   if (typeof v.model === 'string') lines.push(`Model: ${v.model}`)
