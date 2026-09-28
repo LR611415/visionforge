@@ -377,25 +377,6 @@ function registerServed(file) {
 }
 
 /** 把生成图复制一份到下载目录（D:\ 根；无 D 盘则 C:\Users\<用户>\VisionForge）。返回最终目标路径。 */
-function ensureSavedToRoot(file) {
-  try {
-    const base = basename(file)
-    const ext = extname(file)
-    const root = existsSync('D:\\') ? 'D:\\' : join(homedir(), 'VisionForge')
-    let dest = join(root, base)
-    if (dest !== file && existsSync(dest)) {
-      try { if (statSync(dest).size === statSync(file).size) return dest } catch { /* fallthrough */ }
-      const ts = new Date().toISOString().replace(/[:.]/g, '-')
-      const stem = base.slice(0, base.length - ext.length) || 'visionforge'
-      dest = join(dirname(dest), `${stem}-${ts}${ext}`)
-    }
-    const parent = dirname(dest)
-    if (!existsSync(parent)) mkdirSync(parent, { recursive: true })
-    copyFileSync(file, dest)
-    return dest
-  } catch { return file }
-}
-
 function buildPreviewMarkdown(value) {
   const v = value && typeof value === 'object' ? value : {}
   const urls = Array.isArray(v.urls) && v.urls.length > 0 ? v.urls : typeof v.url === 'string' ? [v.url] : []
@@ -406,13 +387,11 @@ function buildPreviewMarkdown(value) {
   urls.forEach((u, i) => {
     if (typeof u !== 'string') return
     const fp = files[i]
-    const saved = typeof fp === 'string' ? ensureSavedToRoot(fp) : null
-    const open = saved ? `file:///${encodeURI(saved.replace(/\\/g, '/'))}` : null
     const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
     const thumb = local ?? u
-    // 缩略图通过本地回环服务加载（渲染器可显示），点击图片由 DSH 宿主原生处理（放大/打开）；已保存副本用 file:// 链接打开系统查看器，不经过侧边栏
-    const dl = open ? ` [点击放大查看（系统图片查看器）](${open})` : ''
-    lines.push(`![生成图 ${i + 1}](${thumb})${dl}`)
+    // 缩略图经本地回环服务加载（渲染器可显示）；[Image: source: ...] 是 DSH 原生图片占位符，点击图片由宿主放大预览
+    lines.push(`![生成图 ${i + 1}](${thumb})`)
+    if (typeof fp === 'string') lines.push(`[Image: source: ${fp}]`)
   })
   return lines.join('\n')
 }
@@ -423,30 +402,23 @@ function renderGenText(value) {
   const files = Array.isArray(v.filePaths) && v.filePaths.length > 0 ? v.filePaths : typeof v.filePath === 'string' ? [v.filePath] : []
   const port = renderServerPort
   const lines = []
-  const savedMap = new Map()
   urls.forEach((u, i) => {
     if (typeof u !== 'string') return
     const fp = files[i]
-    const saved = typeof fp === 'string' ? ensureSavedToRoot(fp) : null
-    if (saved) savedMap.set(fp, saved)
-    const open = saved ? `file:///${encodeURI(saved.replace(/\\/g, '/'))}` : null
     const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
     const thumb = local ?? u
-    // 缩略图通过本地回环服务加载（渲染器可显示），点击图片由 DSH 宿主原生处理（放大/打开）；已保存副本用 file:// 链接打开系统查看器，不经过侧边栏
-    const dl = open ? ` [点击放大查看（系统图片查看器）](${open})` : ''
-    lines.push(`![生成图 ${i + 1}](${thumb})${dl}`)
+    // 缩略图经本地回环服务加载（渲染器可显示）；[Image: source: ...] 是 DSH 原生图片占位符，点击图片由宿主放大预览
+    lines.push(`![生成图 ${i + 1}](${thumb})`)
+    if (typeof fp === 'string') lines.push(`[Image: source: ${fp}]`)
   })
+  if (port > 0 && files.length > 0) {
+    lines.push('')
+    files.forEach((fp, i) => {
+      if (typeof fp === 'string') lines.push(`[保存图片 ${i + 1} 到 D 盘](http://127.0.0.1:${port}/visionforge/save-local?path=${encodeURIComponent(fp)})`)
+    })
+  }
   if (urls.length > 0 || files.length > 0) {
-    const savedLines = files.map((fp) => {
-      if (typeof fp !== 'string') return null
-      const dest = savedMap.get(fp) ?? ensureSavedToRoot(fp)
-      const openLink = `file:///${encodeURI(dest.replace(/\\/g, '/'))}`
-      const rootDir = existsSync('D:\\') ? 'D:\\' : join(homedir(), 'VisionForge')
-      const rootLink = `file:///${encodeURI(rootDir.replace(/\\/g, '/'))}`
-      return `已保存到：${dest}（[点击放大查看](${openLink}) · [打开所在文件夹](${rootLink})）`
-    }).filter(Boolean)
-    if (savedLines.length > 0) lines.push('', ...savedLines)
-    lines.push('', '【展示给用户】请在最终回复正文中【原样、完整】复制上面这一整段：生成图已自动保存到 D 盘根目录（缩略图直接加载 D 盘原图，点击缩略图即可在电脑系统图片查看器中放大；无 D 盘时保存在用户目录 VisionForge）。禁止只列文件路径；禁止把临时 URL 单独贴成文本或链接。')
+    lines.push('', '【展示给用户】请在最终回复正文中【原样、完整】复制上面这一整段：生成图 1 预览（[![生成图 N](缩略图)](本地预览地址)，对话里显示小图；[Image: source: <路径>] 行让点击图片在宿主中放大）和保存按钮（点击后复制到 D 盘根目录并在资源管理器中定位）。禁止只列文件路径；禁止把临时 URL 单独贴成文本或链接。')
   }
   if (typeof v.provider === 'string') lines.push(`Provider: ${v.provider}`)
   if (typeof v.model === 'string') lines.push(`Model: ${v.model}`)
