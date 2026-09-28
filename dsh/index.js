@@ -387,10 +387,10 @@ function buildPreviewMarkdown(value) {
     if (typeof u !== 'string') return
     const fp = files[i]
     const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
-    const open = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/open?path=${encodeURIComponent(fp)}` : null
+    const open = typeof fp === 'string' ? `file:///${fp.replace(/\\/g, '/')}` : null
     const thumb = local ?? u
-    // 点击缩略图 -> /visionforge/open -> 电脑系统图片查看器打开原图（绕开 DSH 打开方式与代理）
-    const dl = port > 0 && typeof fp === 'string' ? ` [保存到 D 盘](http://127.0.0.1:${port}/visionforge/download-local?path=${encodeURIComponent(fp)})` : ''
+    // 点击缩略图 -> file:// 原图 -> 系统默认图片查看器（完全绕开 DSH 打开方式/代理/下载识别）
+    const dl = port > 0 && typeof fp === 'string' ? ` [保存到 D 盘](http://127.0.0.1:${port}/visionforge/save-local?path=${encodeURIComponent(fp)})` : ''
     lines.push(open ? `[![生成图 ${i + 1}](${thumb})](${open})${dl}` : `![生成图 ${i + 1}](${thumb})${dl}`)
   })
   return lines.join('\n')
@@ -406,15 +406,15 @@ function renderGenText(value) {
     if (typeof u !== 'string') return
     const fp = files[i]
     const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
-    const open = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/open?path=${encodeURIComponent(fp)}` : null
+    const open = typeof fp === 'string' ? `file:///${fp.replace(/\\/g, '/')}` : null
     const thumb = local ?? u
-    // 点击缩略图 -> /visionforge/open -> 电脑系统图片查看器打开原图（绕开 DSH 打开方式与代理）
+    // 点击缩略图 -> file:// 原图 -> 系统默认图片查看器（完全绕开 DSH 打开方式/代理/下载识别）
     lines.push(open ? `[![生成图 ${i + 1}](${thumb})](${open})` : `![生成图 ${i + 1}](${thumb})`)
   })
   if (port > 0 && files.length > 0) {
     lines.push('')
     files.forEach((fp, i) => {
-      if (typeof fp === 'string') lines.push(`[保存图片 ${i + 1} 到 D 盘](http://127.0.0.1:${port}/visionforge/download-local?path=${encodeURIComponent(fp)})`)
+      if (typeof fp === 'string') lines.push(`[保存图片 ${i + 1} 到 D 盘](http://127.0.0.1:${port}/visionforge/save-local?path=${encodeURIComponent(fp)})`)
     })
   }
   if (urls.length > 0 || files.length > 0) {
@@ -445,7 +445,7 @@ function startRenderServer() {
         const isImage = url.pathname === '/visionforge/image'
         const isDownload = url.pathname === '/visionforge/download'
         const isOpen = url.pathname === '/visionforge/open'
-        const isSaveLocal = url.pathname === '/visionforge/download-local'
+        const isSaveLocal = url.pathname === '/visionforge/save-local'
         if (!isImage && !isDownload && !isOpen && !isSaveLocal) {
           res.writeHead(404).end('not found')
           return
@@ -529,7 +529,7 @@ function startRenderServer() {
         } catch { /* socket gone */ }
         try {
           const rawUrl = (req.url && String(req.url)) || ''
-          if (rawUrl.includes('/visionforge/download-local')) {
+          if (rawUrl.includes('/visionforge/save-local')) {
             mkdirSync(outDir, { recursive: true })
             appendFileSync(join(outDir, 'save-debug.log'), `${new Date().toISOString()} url=${rawUrl} err=${(err && err.stack) || err}\n`)
           }
