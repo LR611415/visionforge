@@ -4,7 +4,7 @@
     "description": "VisionForge: vision understanding + image generation for DeepSeek Harness (DSH)",
     "type": "module",
     "bin": {
-        "visionforge": "./dist/main.js"
+        "visionforge": "./src/index.js"
     },
     "scripts": {
         "dev": "vite build --watch",
@@ -17,7 +17,7 @@
         "prepublishOnly": "pnpm build"
     },
     "files": [
-        "dist",
+        "src",
         "dsh",
         "skills",
         "cordis.patch.yml",
@@ -46,7 +46,7 @@
     },
     "dependencies": {
         "commander": "^13.1.0",
-        "undici": "^8.10.0"
+        "undici": "^6.29.0"
     },
     "exports": {
         ".": "./dsh/index.js",
