@@ -389,7 +389,7 @@ function buildPreviewMarkdown(value) {
     const fp = files[i]
     const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
     const thumb = local ?? u
-    const img = `![生成图 ${i + 1}](${thumb})`
+    const img = openLink ? `[![生成图 ${i + 1}](${thumb})](${openLink})` : `![生成图 ${i + 1}](${thumb})`
     // file:// 链接：DSH 宿主识别 file:// 并调用系统关联应用（系统图片查看器）打开，不经过侧边栏。
     // 缩略图本身点击 DSH 宿主无放大处理（已多轮验证），放大入口走 file:// 链接文字。
     const openLink = typeof fp === 'string' ? `file:///${encodeURI(fp.replace(/\\/g, '/'))}` : null
@@ -411,7 +411,7 @@ function renderGenText(value) {
     const fp = files[i]
     const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
     const thumb = local ?? u
-    const img = `![生成图 ${i + 1}](${thumb})`
+    const img = openLink ? `[![生成图 ${i + 1}](${thumb})](${openLink})` : `![生成图 ${i + 1}](${thumb})`
     // file:// 链接：DSH 宿主识别 file:// 并调用系统关联应用（系统图片查看器）打开，不经过侧边栏。
     const openLink = typeof fp === 'string' ? `file:///${encodeURI(fp.replace(/\\/g, '/'))}` : null
     const zoom = openLink ? ` [点击放大查看（系统图片查看器）](${openLink})` : ''
