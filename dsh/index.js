@@ -411,7 +411,7 @@ function buildPreviewMarkdown(value) {
     const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
     const thumb = local ?? u
     // 缩略图通过本地回环服务加载（渲染器可显示），点击图片由 DSH 宿主原生处理（放大/打开）；已保存副本用 file:// 链接打开系统查看器，不经过侧边栏
-    const dl = open ? ` [已保存到 D 盘，点击打开](${open})` : ''
+    const dl = open ? ` [点击放大查看（系统图片查看器）](${open})` : ''
     lines.push(`![生成图 ${i + 1}](${thumb})${dl}`)
   })
   return lines.join('\n')
@@ -433,14 +433,17 @@ function renderGenText(value) {
     const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
     const thumb = local ?? u
     // 缩略图通过本地回环服务加载（渲染器可显示），点击图片由 DSH 宿主原生处理（放大/打开）；已保存副本用 file:// 链接打开系统查看器，不经过侧边栏
-    const dl = open ? ` [已保存到 D 盘，点击打开](${open})` : ''
+    const dl = open ? ` [点击放大查看（系统图片查看器）](${open})` : ''
     lines.push(`![生成图 ${i + 1}](${thumb})${dl}`)
   })
   if (urls.length > 0 || files.length > 0) {
     const savedLines = files.map((fp) => {
       if (typeof fp !== 'string') return null
       const dest = savedMap.get(fp) ?? ensureSavedToRoot(fp)
-      return `已保存到：${dest}（点击上方缩略图可放大查看）`
+      const openLink = `file:///${encodeURI(dest.replace(/\\/g, '/'))}`
+      const rootDir = existsSync('D:\\') ? 'D:\\' : join(homedir(), 'VisionForge')
+      const rootLink = `file:///${encodeURI(rootDir.replace(/\\/g, '/'))}`
+      return `已保存到：${dest}（[点击放大查看](${openLink}) · [打开所在文件夹](${rootLink})）`
     }).filter(Boolean)
     if (savedLines.length > 0) lines.push('', ...savedLines)
     lines.push('', '【展示给用户】请在最终回复正文中【原样、完整】复制上面这一整段：生成图已自动保存到 D 盘根目录（缩略图直接加载 D 盘原图，点击缩略图即可在电脑系统图片查看器中放大；无 D 盘时保存在用户目录 VisionForge）。禁止只列文件路径；禁止把临时 URL 单独贴成文本或链接。')
