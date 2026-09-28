@@ -304,14 +304,19 @@ window.__ModuleLoader__.load({
         ;(document.head || document.documentElement).appendChild(style)
 
         document.addEventListener('click', function (event) {
-          var img = event.target
-          if (!img || img.tagName !== 'IMG') return
-          if (!/visionforge\/image/.test(img.getAttribute('src') || '')) return
-          var path = cachePathOf(img)
-          if (!path) return
-          event.preventDefault()
-          event.stopPropagation()
-          openSystemViewer(path)
+          // 向上查找：点击可能落在 img 本身或宿主包它的容器（div/figure）上。
+          var el = event.target
+          while (el && el !== document.body) {
+            if (el.tagName === 'IMG' && /visionforge\/image/.test(el.getAttribute('src') || '')) {
+              var path = cachePathOf(el)
+              if (!path) return
+              event.preventDefault()
+              event.stopPropagation()
+              openSystemViewer(path)
+              return
+            }
+            el = el.parentNode
+          }
         }, true)
 
         // 宿主可能给生成图卡片渲染「放大」按钮；它与「点击图片即查看」重复，

@@ -386,14 +386,13 @@ function buildPreviewMarkdown(value) {
   urls.forEach((u, i) => {
     if (typeof u !== 'string') return
     const fp = files[i]
-    // 图片作为整体卡片：点击图片本体 = file:// 打开缓存位置原图（系统图片查看器，不弹侧边栏）
-    const openLink = typeof fp === 'string' ? `file:///${encodeURI(fp.replace(/\\/g, '/'))}` : null
+    // 图片作为整体卡片：缩略图 src = 本地回环 /visionforge/image（渲染器可显示）；
+    // 点击图片本体由 client.js 捕获 → /visionforge/open → 系统图片查看器（不经过侧边栏）。
     const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
     const thumb = local ?? u
-    const img = openLink ? `[![生成图 ${i + 1}](${thumb})](${openLink})` : `![生成图 ${i + 1}](${thumb})`
     // 下载按钮：点击后把缓存图复制到 D 盘根目录（无 D 盘则用户目录 VisionForge）并在资源管理器中定位
     const dl = port > 0 && typeof fp === 'string' ? ` [保存图片 ${i + 1}](http://127.0.0.1:${port}/visionforge/save-local?path=${encodeURIComponent(fp)})` : ''
-    lines.push(`${img}${dl}`)
+    lines.push(`![生成图 ${i + 1}](${thumb})${dl}`)
   })
   return lines.join('\n')
 }
@@ -409,12 +408,10 @@ function renderGenText(value) {
   urls.forEach((u, i) => {
     if (typeof u !== 'string') return
     const fp = files[i]
-    // 图片作为整体卡片：点击图片本体 = file:// 打开缓存位置原图（系统图片查看器，不弹侧边栏）
-    const openLink = typeof fp === 'string' ? `file:///${encodeURI(fp.replace(/\\/g, '/'))}` : null
+    // 缩略图 src = 本地回环 /visionforge/image；点击图片本体由 client.js 捕获 → 系统图片查看器
     const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
     const thumb = local ?? u
-    const img = openLink ? `[![生成图 ${i + 1}](${thumb})](${openLink})` : `![生成图 ${i + 1}](${thumb})`
-    lines.push(img)
+    lines.push(`![生成图 ${i + 1}](${thumb})`)
   })
   if (port > 0 && files.length > 0) {
     lines.push('')
@@ -429,6 +426,7 @@ function renderGenText(value) {
   if (typeof v.model === 'string') lines.push(`Model: ${v.model}`)
   return lines.join('\n') || JSON.stringify(value)
 }
+
 
 // ---- 循环回环服务（渲染 / 下载 / 打开 / 本地保存）----------------------------
 function startRenderServer() {
