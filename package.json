@@ -7,14 +7,7 @@
         "visionforge": "./src/index.js"
     },
     "scripts": {
-        "dev": "vite build --watch",
-        "build": "vite build",
-        "typecheck": "tsc --noEmit",
-        "test": "vitest run",
-        "coverage": "vitest run --coverage",
-        "lint": "biome check src scripts dsh",
-        "format": "biome check --write src scripts",
-        "prepublishOnly": "pnpm build"
+        "prepublishOnly": "node --check src/index.js && node --check dsh/index.js && node --check dsh/client.js"
     },
     "files": [
         "src",
