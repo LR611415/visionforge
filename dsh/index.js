@@ -377,6 +377,25 @@ function registerServed(file) {
 }
 
 /** 把生成图复制一份到下载目录（D:\ 根；无 D 盘则 C:\Users\<用户>\VisionForge）。返回最终目标路径。 */
+/** 把生成图复制一份到下载目录（D:\ 根；无 D 盘则 C:\Users\<用户>\VisionForge）。返回最终目标路径。 */
+function ensureSavedToRoot(file) {
+  try {
+    const base = basename(file)
+    const ext = extname(file)
+    const root = existsSync('D:\\') ? 'D:\\' : join(homedir(), 'VisionForge')
+    let dest = join(root, base)
+    if (dest !== file && existsSync(dest)) {
+      const ts = new Date().toISOString().replace(/[:.]/g, '-')
+      const stem = base.slice(0, base.length - ext.length) || 'visionforge'
+      dest = join(dirname(dest), `${stem}-${ts}${ext}`)
+    }
+    const parent = dirname(dest)
+    if (!existsSync(parent)) mkdirSync(parent, { recursive: true })
+    copyFileSync(file, dest)
+    return dest
+  } catch { return file }
+}
+
 function buildPreviewMarkdown(value) {
   const v = value && typeof value === 'object' ? value : {}
   const urls = Array.isArray(v.urls) && v.urls.length > 0 ? v.urls : typeof v.url === 'string' ? [v.url] : []
@@ -387,15 +406,14 @@ function buildPreviewMarkdown(value) {
   urls.forEach((u, i) => {
     if (typeof u !== 'string') return
     const fp = files[i]
+    // 生成时自动复制到 D 盘根目录（无 D 盘则用户目录 VisionForge）；消息里只有 file:// 链接，宿主直接调系统应用，不弹侧边栏
+    const saved = typeof fp === 'string' ? ensureSavedToRoot(fp) : null
+    const openLink = saved ? `file:///${encodeURI(saved.replace(/\\/g, '/'))}` : null
     const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
     const thumb = local ?? u
     const img = openLink ? `[![生成图 ${i + 1}](${thumb})](${openLink})` : `![生成图 ${i + 1}](${thumb})`
-    // file:// 链接：DSH 宿主识别 file:// 并调用系统关联应用（系统图片查看器）打开，不经过侧边栏。
-    // 缩略图本身点击 DSH 宿主无放大处理（已多轮验证），放大入口走 file:// 链接文字。
-    const openLink = typeof fp === 'string' ? `file:///${encodeURI(fp.replace(/\\/g, '/'))}` : null
     const zoom = openLink ? ` [点击放大查看（系统图片查看器）](${openLink})` : ''
-    const dl = port > 0 && typeof fp === 'string' ? ` [保存图片 ${i + 1}](http://127.0.0.1:${port}/visionforge/save-local?path=${encodeURIComponent(fp)})` : ''
-    lines.push(`${img}${zoom}${dl}`)
+    lines.push(`${img}${zoom}`)
   })
   return lines.join('\n')
 }
@@ -406,25 +424,29 @@ function renderGenText(value) {
   const files = Array.isArray(v.filePaths) && v.filePaths.length > 0 ? v.filePaths : typeof v.filePath === 'string' ? [v.filePath] : []
   const port = renderServerPort
   const lines = []
+  const savedMap = new Map()
   urls.forEach((u, i) => {
     if (typeof u !== 'string') return
     const fp = files[i]
+    const saved = typeof fp === 'string' ? ensureSavedToRoot(fp) : null
+    if (saved) savedMap.set(fp, saved)
+    const openLink = saved ? `file:///${encodeURI(saved.replace(/\\/g, '/'))}` : null
     const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
     const thumb = local ?? u
     const img = openLink ? `[![生成图 ${i + 1}](${thumb})](${openLink})` : `![生成图 ${i + 1}](${thumb})`
-    // file:// 链接：DSH 宿主识别 file:// 并调用系统关联应用（系统图片查看器）打开，不经过侧边栏。
-    const openLink = typeof fp === 'string' ? `file:///${encodeURI(fp.replace(/\\/g, '/'))}` : null
-    const zoom = openLink ? ` [点击放大查看（系统图片查看器）](${openLink})` : ''
-    lines.push(`${img}${zoom}`)
+    lines.push(img)
   })
-  if (port > 0 && files.length > 0) {
-    lines.push('')
-    files.forEach((fp, i) => {
-      if (typeof fp === 'string') lines.push(`[保存图片 ${i + 1}](http://127.0.0.1:${port}/visionforge/save-local?path=${encodeURIComponent(fp)})`)
-    })
-  }
   if (urls.length > 0 || files.length > 0) {
-    lines.push('', '【展示给用户】请在最终回复正文中【原样、完整】复制上面这一整段：生成图 1 预览（缩略图在对话中显示小图；[点击放大查看（系统图片查看器）] 点击用系统图片查看器打开原图放大，不经过侧边栏）和保存按钮（点击后复制到 D 盘根目录并在资源管理器中定位）。禁止只列文件路径；禁止把临时 URL 单独贴成文本或链接。')
+    const savedLines = files.map((fp) => {
+      if (typeof fp !== 'string') return null
+      const dest = savedMap.get(fp) ?? ensureSavedToRoot(fp)
+      const openLink = `file:///${encodeURI(dest.replace(/\\/g, '/'))}`
+      const rootDir = existsSync('D:\\') ? 'D:\\' : join(homedir(), 'VisionForge')
+      const rootLink = `file:///${encodeURI(rootDir.replace(/\\/g, '/'))}`
+      return `已保存到：${dest}（[点击放大查看](${openLink}) · [打开所在文件夹](${rootLink})）`
+    }).filter(Boolean)
+    if (savedLines.length > 0) lines.push('', ...savedLines)
+    lines.push('', '【展示给用户】请在最终回复正文中【原样、完整】复制上面这一整段：生成图已自动保存到 D 盘根目录（缩略图在对话中显示小图，点击缩略图即可在电脑系统图片查看器中放大；无 D 盘时保存在用户目录 VisionForge）。禁止只列文件路径；禁止把临时 URL 单独贴成文本或链接。')
   }
   if (typeof v.provider === 'string') lines.push(`Provider: ${v.provider}`)
   if (typeof v.model === 'string') lines.push(`Model: ${v.model}`)
