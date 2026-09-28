@@ -387,9 +387,11 @@ function buildPreviewMarkdown(value) {
     if (typeof u !== 'string') return
     const fp = files[i]
     const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
+    const open = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/open?path=${encodeURIComponent(fp)}` : null
     const thumb = local ?? u
-    const dl = port > 0 && typeof fp === 'string' ? ` [下载](http://127.0.0.1:${port}/visionforge/download?path=${encodeURIComponent(fp)})` : ''
-    lines.push(`![生成图 ${i + 1}](${thumb})${dl}`)
+    // 点击缩略图 -> /visionforge/open -> 电脑系统图片查看器打开原图（绕开 DSH 打开方式与代理）
+    const dl = port > 0 && typeof fp === 'string' ? ` [保存到 D 盘](http://127.0.0.1:${port}/visionforge/download-local?path=${encodeURIComponent(fp)})` : ''
+    lines.push(open ? `[![生成图 ${i + 1}](${thumb})](${open})${dl}` : `![生成图 ${i + 1}](${thumb})${dl}`)
   })
   return lines.join('\n')
 }
@@ -404,17 +406,19 @@ function renderGenText(value) {
     if (typeof u !== 'string') return
     const fp = files[i]
     const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
+    const open = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/open?path=${encodeURIComponent(fp)}` : null
     const thumb = local ?? u
-    lines.push(`![生成图 ${i + 1}](${thumb})`)
+    // 点击缩略图 -> /visionforge/open -> 电脑系统图片查看器打开原图（绕开 DSH 打开方式与代理）
+    lines.push(open ? `[![生成图 ${i + 1}](${thumb})](${open})` : `![生成图 ${i + 1}](${thumb})`)
   })
   if (port > 0 && files.length > 0) {
     lines.push('')
     files.forEach((fp, i) => {
-      if (typeof fp === 'string') lines.push(`[下载图片 ${i + 1}](http://127.0.0.1:${port}/visionforge/download?path=${encodeURIComponent(fp)})`)
+      if (typeof fp === 'string') lines.push(`[保存图片 ${i + 1} 到 D 盘](http://127.0.0.1:${port}/visionforge/download-local?path=${encodeURIComponent(fp)})`)
     })
   }
   if (urls.length > 0 || files.length > 0) {
-    lines.push('', '【展示给用户】请在最终回复正文中【原样、完整】复制上面这一整段：每条图片预览链接（[![生成图 N](缩略图)](本地预览地址)，对话里显示小图、点击打开系统图片查看器预览并放大）和每条下载按钮（点击后复制到 D 盘根目录并在资源管理器中定位，返回的消息里带下载位置跳转链接）。禁止只列文件路径；禁止把临时 URL 单独贴成文本或链接。')
+    lines.push('', '【展示给用户】请在最终回复正文中【原样、完整】复制上面这一整段：每条图片预览链接（[![生成图 N](缩略图)](本地预览地址)，对话里显示小图、点击缩略图在电脑系统图片查看器中打开原图并放大）和每条保存按钮（点击后复制到 D 盘根目录并在资源管理器中定位）。禁止只列文件路径；禁止把临时 URL 单独贴成文本或链接。')
   }
   if (typeof v.provider === 'string') lines.push(`Provider: ${v.provider}`)
   if (typeof v.model === 'string') lines.push(`Model: ${v.model}`)

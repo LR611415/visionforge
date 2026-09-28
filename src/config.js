@@ -31,7 +31,7 @@ export const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
 
 export const REUSE_HARNESSES = ['claude', 'codex', 'opencode', 'pi', 'grok'];
 
-const STRING_FIELDS = ['apiKey', 'baseUrl', 'model', 'proxy'];
+const STRING_FIELDS = ['apiKey', 'baseUrl', 'model', 'visionModel', 'proxy'];
 
 // ---------------------------------------------------------------------------
 // 读取
@@ -172,7 +172,7 @@ function setProviderField(config, dottedKey, value) {
         );
     }
     if (field === 'structuredOutput') {
-        if (foldProviderName(providerName) !== 'openai') {
+        if (!['openai', 'qwen'].includes(foldProviderName(providerName))) {
             throw new Error(`structuredOutput applies to the openai provider only, not ${providerName}.`);
         }
         const normalized = value.trim().toLowerCase();

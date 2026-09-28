@@ -97,7 +97,7 @@ async function executeOpenAiCompat(options) {
         } (model: ${model}, baseUrl: ${options.settings.baseUrl})`;
         throw new Error(advice);
     }
-    const missing = missingSchemaFields(VISION_RESULT_SCHEMA, parsed);
+    const missing = missingSchemaFields(parsed);
     if (missing.length > 0) {
         const advice = `The endpoint returned JSON missing required vision fields: ${missing.join(', ')}. ${
             options.settings?.structuredOutput
@@ -107,7 +107,7 @@ async function executeOpenAiCompat(options) {
         throw new Error(advice);
     }
     return {
-        result: normalizeVisionResult(VISION_RESULT_SCHEMA, parsed),
+        result: normalizeVisionResult(parsed),
         meta: {
             conversationId: payload.id ?? null,
             durationSeconds: (Date.now() - startedAt) / 1000,

@@ -357,7 +357,7 @@ export async function analyzeImage(options) {
         const configured = resolveProviderSettings(provider.name, config);
         const settingsBase = options.extraBody ? { ...configured, extraBody: options.extraBody } : configured;
         const firstProvider = attempts.every((attempt) => attempt.provider === provider.name);
-        const model = (firstProvider ? options.model : undefined) || settingsBase.model || provider.defaultModel;
+        const model = (firstProvider ? options.model : undefined) || settingsBase.visionModel || provider.visionDefaultModel || settingsBase.model || provider.defaultModel;
         const apiKeys = splitApiKeys(settingsBase.apiKey);
         const configuredKeyRuns =
             apiKeys.length > 0 ? apiKeys.map((apiKey, keyIndex) => ({ apiKey, keyIndex })) : [{ apiKey: undefined, keyIndex: undefined }];

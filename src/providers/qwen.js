@@ -9,8 +9,110 @@ import { errorFromApiStatus, extractJson, mergeExtraBody, redactSecrets, splitAp
 
 const DEFAULT_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
 export const QWEN_DEFAULT_MODEL = 'qwen3.8-max';
+// 读图（analyze）专用视觉模型：qwen3.8-max 是纯文本模型，不能理解图片。
+// 读图默认走视觉模型，用户可用 providers.qwen.visionModel 覆盖（config set qwen.visionModel <name>）。
+export const QWEN_VISION_DEFAULT_MODEL = 'qwen3-vl-plus';
 
 const QWEN_RESERVED = ['model', 'messages', 'stream'];
+
+/**
+ * 自由 JSON → vision 结构容错归一。
+ * 兼容网关 + qwen-vl 系列模型常不按 vision schema 的字段名返回（自由发挥
+ * image_analysis/scene/subject/attire 之类）。此函数把可用信息归纳成
+ * VISION_RESULT_SCHEMA 结构，不丢内容、不抛错，保证 analyze 有结果可用。
+ */
+function normalizeLooseVision(free, missingFields) {
+    const result = {
+        summary: '',
+        ocr: { full_text: '', lines: [] },
+        layout: { regions: [] },
+        semantics: { scene: '', intent: '', entities: [], relations: [] },
+        visual: { dominant_colors: [], style: '', notes: [] },
+        uncertainty: [],
+    };
+    const pick = (keys) => {
+        for (const k of keys) {
+            const v = free?.[k];
+            if (v !== undefined && v !== null) return v;
+        }
+        return undefined;
+    };
+    const asString = (v) =>
+        typeof v === 'string' ? v : v && typeof v === 'object' ? JSON.stringify(v) : v !== undefined && v !== null ? String(v) : '';
+    // summary：优先语义文本字段；否则递归收集全部字符串值拼接
+    let summary = pick(['summary', 'description', 'caption', 'scene', 'image_analysis', 'analysis']);
+    if (typeof summary === 'object') summary = JSON.stringify(summary);
+    if (typeof summary !== 'string' || !summary.trim()) {
+        const parts = [];
+        const walk = (v, depth) => {
+            if (depth > 4 || parts.length >= 24) return;
+            if (typeof v === 'string') {
+                if (v.trim()) parts.push(v.trim());
+            } else if (Array.isArray(v)) {
+                for (const x of v) walk(x, depth + 1);
+            } else if (v && typeof v === 'object') {
+                for (const x of Object.values(v)) walk(x, depth + 1);
+            }
+        };
+        walk(free, 0);
+        summary = parts.join('; ');
+    }
+    result.summary = truncate(summary, 3000);
+    // ocr：找 full_text / visible_text / text
+    const ocrText = pick(['full_text', 'visible_text', 'ocr_text', 'text', 'ocr']);
+    result.ocr.full_text = typeof ocrText === 'string' ? ocrText : typeof ocrText === 'object' ? JSON.stringify(ocrText) : '';
+    if (Array.isArray(free?.ocr?.lines) || Array.isArray(free?.lines)) {
+        result.ocr.lines = (free.ocr?.lines ?? free.lines ?? []).map((l) => ({ text: asString(l.text ?? l), language: 'unknown' }));
+    }
+    // layout：找 regions / textual_elements
+    const regions = pick(['regions', 'textual_elements', 'layout_regions']);
+    if (Array.isArray(regions)) {
+        result.layout.regions = regions.map((r, i) => ({
+            type: asString(r.type ?? r.kind ?? 'text') || 'text',
+            reading_order: typeof r.reading_order === 'number' ? r.reading_order : i + 1,
+            text: asString(r.text ?? r.content ?? ''),
+        }));
+    }
+    // semantics
+    result.semantics.scene = asString(pick(['scene', 'environment', 'setting']));
+    result.semantics.intent = asString(pick(['intent', 'purpose']));
+    const entities = pick(['entities', 'objects', 'subject']);
+    if (Array.isArray(entities)) {
+        result.semantics.entities = entities.map((e) => ({
+            name: asString(e.name ?? e.label ?? e),
+            type: asString(e.type ?? 'object'),
+            evidence: asString(e.evidence ?? ''),
+        }));
+    }
+    // visual
+    const colors = pick(['dominant_colors', 'colors', 'color_palette', 'palette']);
+    if (Array.isArray(colors)) result.visual.dominant_colors = colors.map(asString);
+    result.visual.style = asString(pick(['style', 'visual_style', 'aesthetic']));
+    const notes = pick(['notes', 'visual_notes', 'notable_visual_detail']);
+    if (Array.isArray(notes)) result.visual.notes = notes.map(asString);
+    // uncertainty
+    const unc = pick(['uncertainty', 'uncertain_text', 'ambiguous']);
+    if (Array.isArray(unc)) result.uncertainty = unc.map(asString);
+    else if (typeof unc === 'string' && unc) result.uncertainty = [unc];
+    // 仍缺失的字段给空结构兜底
+    for (const f of missingFields) {
+        if (!result[f]) {
+            result[f] =
+                f === 'ocr'
+                    ? { full_text: '', lines: [] }
+                    : f === 'layout'
+                      ? { regions: [] }
+                      : f === 'semantics'
+                        ? { scene: '', intent: '', entities: [], relations: [] }
+                        : f === 'visual'
+                          ? { dominant_colors: [], style: '', notes: [] }
+                          : f === 'uncertainty'
+                            ? []
+                            : '';
+        }
+    }
+    return result;
+}
 
 async function executeQwenApi(options) {
     const apiKeys = splitApiKeys(options.settings?.apiKey);
@@ -45,7 +147,7 @@ Return the required JSON object. ${JSON_TEMPLATE_INSTRUCTION}`;
         stream: false,
     };
     if (options.settings?.structuredOutput === true) {
-        body.response_format = { type: 'json_object', schema: visionResultSchemaJson(VISION_RESULT_SCHEMA), name: 'vision_result' };
+        body.response_format = { type: 'json_object' };
     }
     const startedAt = Date.now();
     const response = await apiFetch(
@@ -77,14 +179,15 @@ Return the required JSON object. ${JSON_TEMPLATE_INSTRUCTION}`;
             `Qwen returned no usable JSON. If the gateway supports it, enable qwen.structuredOutput to enforce the schema. (model: ${model}, baseUrl: ${baseUrl})`,
         );
     }
-    const missing = missingSchemaFields(VISION_RESULT_SCHEMA, parsed);
+    const missing = missingSchemaFields(parsed);
+    let normalized = parsed;
     if (missing.length > 0) {
-        throw new Error(
-            `Qwen returned JSON missing required vision fields: ${missing.join(', ')}. If the gateway supports it, enable qwen.structuredOutput. (model: ${model}, baseUrl: ${baseUrl})`,
-        );
+        // 兼容网关 + qwen-vl 系列模型常不按 vision schema 返回字段名（自由 JSON）。
+        // 容错归一：把可用信息归纳成 vision 结构，不丢内容、不抛错，附 warning。
+        normalized = normalizeLooseVision(parsed, missing);
     }
     return {
-        result: normalizeVisionResult(VISION_RESULT_SCHEMA, parsed),
+        result: normalizeVisionResult(normalized),
         meta: {
             conversationId: payload.id ?? null,
             durationSeconds: (Date.now() - startedAt) / 1000,
@@ -96,5 +199,6 @@ Return the required JSON object. ${JSON_TEMPLATE_INSTRUCTION}`;
 export const qwenProvider = {
     name: 'qwen',
     defaultModel: QWEN_DEFAULT_MODEL,
+    visionDefaultModel: QWEN_VISION_DEFAULT_MODEL,
     execute: executeQwenApi,
 };
