@@ -449,6 +449,17 @@ function startRenderServer() {
         const isDownload = url.pathname === '/visionforge/download'
         const isOpen = url.pathname === '/visionforge/open'
         const isSaveLocal = url.pathname === '/visionforge/save-local'
+        const isClickDebug = url.pathname === '/visionforge/click-debug'
+        if (isClickDebug) {
+          // 诊断：client.js 点击捕获命中后上报，用于定位"点图无反应"卡在哪一环。
+          try {
+            mkdirSync(outDir, { recursive: true })
+            appendFileSync(join(outDir, 'click-debug.log'), `${new Date().toISOString()} click raw=${url.searchParams.get('path') ?? ''} ua=${req.headers?.['user-agent'] ?? ''}\n`)
+          } catch { /* log best-effort */ }
+          res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' })
+          res.end('{"ok":true}')
+          return
+        }
         if (!isImage && !isDownload && !isOpen && !isSaveLocal) {
           res.writeHead(404).end('not found')
           return
@@ -466,6 +477,10 @@ function startRenderServer() {
         }
         if (isOpen) {
           // 系统默认图片查看器打开（不经过 DSH 自身打开方式）。
+          try {
+            mkdirSync(outDir, { recursive: true })
+            appendFileSync(join(outDir, 'open-debug.log'), `${new Date().toISOString()} open file=${file}\n`)
+          } catch { /* log best-effort */ }
           try {
             const child = spawn('cmd.exe', ['/c', 'start', '', file], { detached: true, stdio: 'ignore' })
             child.on('error', () => {})

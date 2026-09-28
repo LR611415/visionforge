@@ -312,6 +312,10 @@ window.__ModuleLoader__.load({
               if (!path) return
               event.preventDefault()
               event.stopPropagation()
+              // 诊断：命中后上报，定位"点图无反应"卡在哪一环（无记录 = 监听器未触发）。
+              try {
+                fetch('/visionforge/click-debug?path=' + encodeURIComponent(path), { method: 'GET' }).catch(function () {})
+              } catch (err) { /* diagnostic is best-effort */ }
               openSystemViewer(path)
               return
             }
