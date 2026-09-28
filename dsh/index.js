@@ -394,7 +394,7 @@ function buildPreviewMarkdown(value) {
     // 缩略图本身点击 DSH 宿主无放大处理（已多轮验证），放大入口走 file:// 链接文字。
     const openLink = typeof fp === 'string' ? `file:///${encodeURI(fp.replace(/\\/g, '/'))}` : null
     const zoom = openLink ? ` [点击放大查看（系统图片查看器）](${openLink})` : ''
-    const dl = port > 0 && typeof fp === 'string' ? ` [保存图片 ${i + 1} 到 D 盘](http://127.0.0.1:${port}/visionforge/save-local?path=${encodeURIComponent(fp)})` : ''
+    const dl = port > 0 && typeof fp === 'string' ? ` [保存图片 ${i + 1}](http://127.0.0.1:${port}/visionforge/save-local?path=${encodeURIComponent(fp)})` : ''
     lines.push(`${img}${zoom}${dl}`)
   })
   return lines.join('\n')
@@ -420,7 +420,7 @@ function renderGenText(value) {
   if (port > 0 && files.length > 0) {
     lines.push('')
     files.forEach((fp, i) => {
-      if (typeof fp === 'string') lines.push(`[保存图片 ${i + 1} 到 D 盘](http://127.0.0.1:${port}/visionforge/save-local?path=${encodeURIComponent(fp)})`)
+      if (typeof fp === 'string') lines.push(`[保存图片 ${i + 1}](http://127.0.0.1:${port}/visionforge/save-local?path=${encodeURIComponent(fp)})`)
     })
   }
   if (urls.length > 0 || files.length > 0) {
