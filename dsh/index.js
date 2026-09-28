@@ -387,11 +387,11 @@ function buildPreviewMarkdown(value) {
     if (typeof u !== 'string') return
     const fp = files[i]
     const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
-    const open = typeof fp === 'string' ? `file:///${fp.replace(/\\/g, '/')}` : null
-    const thumb = local ?? u
-    // 点击缩略图 -> file:// 原图 -> 系统默认图片查看器（完全绕开 DSH 打开方式/代理/下载识别）
+    const open = typeof fp === 'string' ? `file:///${encodeURI(fp.replace(/\\/g, '/'))}` : null
+    const thumb = open ?? local ?? u
+    // 缩略图直接加载本地原图（file:// 本地文件），点击图片交给 DSH 宿主对图片的原生处理（放大/打开），不经过链接跳转
     const dl = port > 0 && typeof fp === 'string' ? ` [保存到 D 盘](http://127.0.0.1:${port}/visionforge/save-local?path=${encodeURIComponent(fp)})` : ''
-    lines.push(open ? `[![生成图 ${i + 1}](${thumb})](${open})${dl}` : `![生成图 ${i + 1}](${thumb})${dl}`)
+    lines.push(`![生成图 ${i + 1}](${thumb})${dl}`)
   })
   return lines.join('\n')
 }
@@ -406,10 +406,10 @@ function renderGenText(value) {
     if (typeof u !== 'string') return
     const fp = files[i]
     const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
-    const open = typeof fp === 'string' ? `file:///${fp.replace(/\\/g, '/')}` : null
-    const thumb = local ?? u
-    // 点击缩略图 -> file:// 原图 -> 系统默认图片查看器（完全绕开 DSH 打开方式/代理/下载识别）
-    lines.push(open ? `[![生成图 ${i + 1}](${thumb})](${open})` : `![生成图 ${i + 1}](${thumb})`)
+    const open = typeof fp === 'string' ? `file:///${encodeURI(fp.replace(/\\/g, '/'))}` : null
+    const thumb = open ?? local ?? u
+    // 缩略图直接加载本地原图（file:// 本地文件），点击图片交给 DSH 宿主对图片的原生处理（放大/打开），不经过链接跳转
+    lines.push(`![生成图 ${i + 1}](${thumb})`)
   })
   if (port > 0 && files.length > 0) {
     lines.push('')
@@ -497,8 +497,8 @@ function startRenderServer() {
             })
             reveal.unref()
           } catch { /* reveal is a nicety */ }
-          res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' })
-          res.end(JSON.stringify({ ok: true, file: dest, source: file }))
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'access-control-allow-origin': '*' })
+          res.end(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>VisionForge 保存成功</title><body style="font-family:system-ui;padding:24px"><h2 style="color:#166534">保存成功</h2><p>文件：${dest}</p><p>已在资源管理器中定位该文件。</p></body></html>`)
           return
         }
         const ext = extname(file).toLowerCase()
