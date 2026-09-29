@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci || npm install --no-audit --no-fund
+
+      - name: Syntax check entry points
+        run: |
+          node --check src/index.js
+          node --check dsh/index.js
+          node --check dsh/client.js
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Verify package manifest (dsh bundle + peerDependencies)
+        run: node -e "
+          const j = require('./package.json');
+          if (!j.dsh?.bundle?.patch) throw new Error('missing dsh.bundle.patch');
+          if (!j.peerDependencies?.['@deepseek-ai/dsh-client-ui-primitives']) throw new Error('missing peerDependencies for dsh-client-ui-primitives');
+          if (!j.repository?.url?.includes('github.com/LR611415/visionforge')) throw new Error('repository must point to GitHub repo');
+          console.log('manifest OK');
+        "

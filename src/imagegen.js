@@ -117,7 +117,7 @@ function routeTextToImage(forced, qwenKey, glmKey) {
 // ---------------------------------------------------------------------------
 
 /** 把用户可能输入的 1024x1024 / 1024×1024 / 1024*1024 统一成 Qwen 要求的 W*H。 */
-function normalizeSize(size) {
+export function normalizeSize(size) {
     if (typeof size !== 'string' || size.trim() === '') return '1024*1024'
     const m = size.trim().toLowerCase().match(/^(\d+)\s*[x×*]\s*(\d+)$/)
     if (m) return `${m[1]}*${m[2]}`
