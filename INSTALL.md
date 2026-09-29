@@ -103,7 +103,7 @@ path). Go to Step 2 for the engine, then Step 3 to verify.
 ## Step 2: give it one vision engine
 
 VisionForge needs at least one working engine. The CLI is invoked as
-`npx @lr611/visionforge` when published, or `node <dst>\dist\main.js` for a local copy
+`npx @lr611/visionforge` when published, or `node <dst>\src\index.js` for a local copy
 (below, `visionforge` means whichever resolves). First, check what is already
 configured — it spends no quota:
 
