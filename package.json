@@ -1,59 +1,64 @@
 {
-    "name": "@lr611/visionforge",
-    "version": "0.1.9",
-    "description": "VisionForge: vision understanding + image generation for DeepSeek Harness (DSH)",
-    "type": "module",
-    "bin": {
-        "visionforge": "./src/index.js"
-    },
-    "scripts": {
-        "prepublishOnly": "node --check src/index.js && node --check dsh/index.js && node --check dsh/client.js"
-    },
-    "files": [
-        "src",
-        "dsh",
-        "skills",
-        "cordis.patch.yml",
-        "README.md",
-        "INSTALL.md",
-        "LICENSE"
-    ],
-    "keywords": [
-        "dsh",
-        "vision",
-        "ocr",
-        "image-generation",
-        "image-edit",
-        "qwen",
-        "multimodal",
-        "deepseek-harness",
-        "visionforge"
-    ],
-    "license": "MIT",
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/LR611415/visionforge.git"
-    },
-    "engines": {
-        "node": ">=22.19"
-    },
-    "dependencies": {
-        "commander": "^13.1.0"
-    },
-    "exports": {
-        ".": "./dsh/index.js",
-        "./dsh": "./dsh/index.js",
-        "./package.json": "./package.json",
-        "./client": "./dsh/client.js"
-    },
-    "dsh": {
-        "bundle": {
-            "patch": "./cordis.patch.yml"
-        },
-        "client": {
-            "inject": [],
-            "platform": "web",
-            "immediately": true
-        }
-    }
+    "name":  "@lr611/visionforge",
+    "version":  "0.1.9",
+    "description":  "VisionForge: vision understanding + image generation for DeepSeek Harness (DSH)",
+    "type":  "module",
+    "bin":  {
+                "visionforge":  "./src/index.js"
+            },
+    "scripts":  {
+                    "prepublishOnly":  "node --check src/index.js \u0026\u0026 node --check dsh/index.js \u0026\u0026 node --check dsh/client.js"
+                },
+    "files":  [
+                  "src",
+                  "dsh",
+                  "skills",
+                  "cordis.patch.yml",
+                  "README.md",
+                  "INSTALL.md",
+                  "LICENSE"
+              ],
+    "keywords":  [
+                     "dsh",
+                     "vision",
+                     "ocr",
+                     "image-generation",
+                     "image-edit",
+                     "qwen",
+                     "multimodal",
+                     "deepseek-harness",
+                     "visionforge"
+                 ],
+    "license":  "MIT",
+    "repository":  {
+                       "type":  "git",
+                       "url":  "git+https://github.com/LR611415/visionforge.git"
+                   },
+    "engines":  {
+                    "node":  "\u003e=22.19"
+                },
+    "dependencies":  {
+                         "commander":  "^13.1.0"
+                     },
+    "exports":  {
+                    ".":  "./dsh/index.js",
+                    "./dsh":  "./dsh/index.js",
+                    "./package.json":  "./package.json",
+                    "./client":  "./dsh/client.js"
+                },
+    "dsh":  {
+                "bundle":  {
+                               "patch":  "./cordis.patch.yml"
+                           },
+                "client":  {
+                               "inject":  [
+
+                                          ],
+                               "platform":  "web",
+                               "immediately":  true
+                           }
+            },
+    "peerDependencies":  {
+                             "@deepseek-ai/dsh-client-ui-primitives":  "\u003e=0.0.1-rc.1 \u003c0.1.0 || \u003e=0.1.0-rc.1 \u003c0.2.0-0"
+                         }
 }
