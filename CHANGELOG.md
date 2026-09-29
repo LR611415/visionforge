@@ -27,6 +27,17 @@ SemVer (with `-rc` prereleases for the harness this plugin targets).
 - `README.en.md` — English translation of the README (with language switch links).
 - `docs/exit-codes.md` — CLI exit-code reference.
 
+### Changed
+- Diagnostics logs (`click-debug.log` / `open-debug.log` / `save-debug.log`) are now behind a
+  **`debugLogs` setting** (default **off**, toggle in the settings card) instead of being
+  written unconditionally.
+- Settings card shows the **last engine actually used for reading** (`~/.visionforge/last-read.json`,
+  recorded on each successful analyze, with provider/model/timestamp and the attempt chain).
+
+### Added
+- `scripts/uninstall.ps1` — guided one-command uninstall (clears profile declarations,
+  plugin directory, `~/.visionforge` config and caches, with confirmation prompts).
+
 ## [0.1.9] — 2026-09-28
 
 ### Added

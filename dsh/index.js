@@ -227,6 +227,7 @@ export function engineSummary() {
     visionPriority: config.visionPriority === 'plugin' ? 'plugin' : 'official',
     outputDir: typeof config.outputDir === 'string' && config.outputDir.trim() !== '' ? config.outputDir : defaultOutputDir(),
     pasteToPath: config.pasteToPath !== false,
+    debugLogs: config.debugLogs === true,
   }
 }
 
@@ -302,6 +303,9 @@ export function applySettings(patch) {
   }
   if (patch?.pasteToPath !== undefined && typeof patch.pasteToPath === 'boolean') {
     config.pasteToPath = patch.pasteToPath
+  }
+  if (patch?.debugLogs !== undefined && typeof patch.debugLogs === 'boolean') {
+    config.debugLogs = patch.debugLogs
   }
   const file = configPath()
   try {
@@ -444,6 +448,7 @@ function startRenderServer() {
           res.end()
           return
         }
+        const debugLogs = (() => { try { return readConfig().debugLogs === true } catch { return false } })()
         const url = new URL(req.url ?? '/', 'http://127.0.0.1')
         const isImage = url.pathname === '/visionforge/image'
         const isDownload = url.pathname === '/visionforge/download'
@@ -454,8 +459,10 @@ function startRenderServer() {
         if (isClickDebug) {
           // 诊断：client.js 点击捕获命中后上报，用于定位"点图无反应"卡在哪一环。
           try {
-            mkdirSync(outDir, { recursive: true })
-            appendFileSync(join(outDir, 'click-debug.log'), `${new Date().toISOString()} click raw=${url.searchParams.get('path') ?? ''} ua=${req.headers?.['user-agent'] ?? ''}\n`)
+            if (debugLogs) {
+              mkdirSync(outDir, { recursive: true })
+              appendFileSync(join(outDir, 'click-debug.log'), `${new Date().toISOString()} click raw=${url.searchParams.get('path') ?? ''} ua=${req.headers?.['user-agent'] ?? ''}\n`)
+            }
           } catch { /* log best-effort */ }
           res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' })
           res.end('{"ok":true}')
@@ -479,8 +486,10 @@ function startRenderServer() {
         if (isOpen) {
           // 系统默认图片查看器打开（不经过 DSH 自身打开方式）。
           try {
-            mkdirSync(outDir, { recursive: true })
-            appendFileSync(join(outDir, 'open-debug.log'), `${new Date().toISOString()} open file=${file}\n`)
+            if (debugLogs) {
+              mkdirSync(outDir, { recursive: true })
+              appendFileSync(join(outDir, 'open-debug.log'), `${new Date().toISOString()} open file=${file}\n`)
+            }
           } catch { /* log best-effort */ }
           try {
             const child = spawn('cmd.exe', ['/c', 'start', '', file], { detached: true, stdio: 'ignore' })
@@ -579,8 +588,10 @@ function startRenderServer() {
         try {
           const rawUrl = (req.url && String(req.url)) || ''
           if (rawUrl.includes('/visionforge/save-local')) {
-            mkdirSync(outDir, { recursive: true })
-            appendFileSync(join(outDir, 'save-debug.log'), `${new Date().toISOString()} url=${rawUrl} err=${(err && err.stack) || err}\n`)
+            if (debugLogs) {
+              mkdirSync(outDir, { recursive: true })
+              appendFileSync(join(outDir, 'save-debug.log'), `${new Date().toISOString()} url=${rawUrl} err=${(err && err.stack) || err}\n`)
+            }
           }
         } catch { /* logging is best-effort */ }
       }
@@ -644,6 +655,7 @@ function settingsPageHtml() {
 </style>
 <h1>VisionForge 视觉引擎设置</h1>
 <div class="sub">视觉理解 + 图片生成。配置由你自己填写，保存在本地（~/.visionforge/config.json），不会上传</div>
+<div id="lastRead" class="sub"></div>
 <div class="card">
   <label>引擎（提供方）</label>
   <select id="engine"></select>
@@ -668,6 +680,11 @@ function settingsPageHtml() {
   <select id="pasteToPath">
     <option value="true">开启</option>
     <option value="false">关闭</option>
+  </select>
+  <label>调试日志（排障用）</label>
+  <select id="debugLogs">
+    <option value="true">开启</option>
+    <option value="false">关闭（默认）</option>
   </select>
   <button id="save">保存</button>
   <div id="msg"></div>
@@ -728,6 +745,14 @@ function settingsPageHtml() {
       document.getElementById('visionPriority').value = DATA.visionPriority || 'official'
       document.getElementById('outputDir').value = DATA.outputDir || ''
       document.getElementById('pasteToPath').value = DATA.pasteToPath ? 'true' : 'false'
+      document.getElementById('debugLogs').value = DATA.debugLogs ? 'true' : 'false'
+      var lr = DATA.lastRead
+      var lrEl = document.getElementById('lastRead')
+      if (lr && lr.provider) {
+        lrEl.textContent = '最近一次读图引擎：' + lr.provider + (lr.model ? '（' + lr.model + '）' : '') + (lr.at ? ' · ' + new Date(lr.at).toLocaleString() : '')
+      } else {
+        lrEl.textContent = '最近一次读图引擎：暂无记录（完成一次读图后显示）'
+      }
       renderEngine(DATA.current || 'qwen')
     } catch (e) { msg.textContent = '加载当前配置失败：' + e.message; msg.className = 'err' }
   })()
@@ -753,7 +778,8 @@ function settingsPageHtml() {
         model: model,
         visionPriority: document.getElementById('visionPriority').value,
         outputDir: document.getElementById('outputDir').value.trim(),
-        pasteToPath: document.getElementById('pasteToPath').value === 'true'
+        pasteToPath: document.getElementById('pasteToPath').value === 'true',
+        debugLogs: document.getElementById('debugLogs').value === 'true'
       }
       if (keyVal !== '' && keyVal !== '••••••') body.apiKey = keyVal
       var r = await fetch('/visionforge/settings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
@@ -815,6 +841,8 @@ function startSettingsServer() {
               visionPriority: config.visionPriority === 'plugin' ? 'plugin' : 'official',
               outputDir: typeof config.outputDir === 'string' && config.outputDir.trim() !== '' ? config.outputDir : outputDir(),
               pasteToPath: config.pasteToPath !== false,
+              debugLogs: config.debugLogs === true,
+              lastRead: (() => { try { return JSON.parse(readFileSync(join(homedir(), '.visionforge', 'last-read.json'), 'utf8')) } catch { return null } })(),
             })
             return
           }
@@ -842,6 +870,7 @@ function startSettingsServer() {
               if (patch.visionPriority === 'official' || patch.visionPriority === 'plugin') enginePatch.visionPriority = patch.visionPriority
               if (typeof patch.outputDir === 'string') enginePatch.outputDir = patch.outputDir.trim()
               if (typeof patch.pasteToPath === 'boolean') enginePatch.pasteToPath = patch.pasteToPath
+              if (typeof patch.debugLogs === 'boolean') enginePatch.debugLogs = patch.debugLogs
               applySettings(enginePatch)
               sendJson(200, { ok: true })
             })().catch((error) => sendJson(400, { error: String(error?.message ?? error) }))
@@ -1035,6 +1064,13 @@ function makeReadTool(toolName, recentPastePathsRef, toolCache) {
           } catch {
             throw new Error(`visionforge produced no JSON: ${stdout.trim().slice(0, 300)}`)
           }
+          // 记录最近一次实际使用的引擎链（设置卡片回显用）
+          try {
+            const meta = parsed && parsed.meta && typeof parsed.meta === 'object' ? parsed.meta : {}
+            const attempts = Array.isArray(meta.attempts) ? meta.attempts : []
+            const last = attempts[attempts.length - 1]
+            writeFileSync(join(homedir(), '.visionforge', 'last-read.json'), JSON.stringify({ at: new Date().toISOString(), provider: (last && last.provider) || '', model: (last && last.model) || '', attempts }, null, 2) + '\n', { mode: 0o600 })
+          } catch { /* best-effort */ }
           return parsed.result
         })()
         toolCache.set(cacheKey, run)

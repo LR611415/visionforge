@@ -103,6 +103,10 @@ AI 会按 `INSTALL.md` 的步骤执行：npm 一键安装（或本地复制兜�
 - **卸载即干净**：移除插件后 DSH 重启即不再注入脚本、不再启动本地服务、端口释放。插件代码全部在插件包内（`dsh/index.js`、`dsh/client.js`），**不修改任何 DSH 官方文件**。
 - **可选彻底清理**（卸载后）：
   ```powershell
+  powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1   # 一键引导式卸载（自动清理 profile 声明/插件目录/配置/缓存，含确认提示）
+  ```
+  或手动：
+  ```powershell
   Remove-Item -Recurse -Force "C:\Users\<你>\.visionforge"   # 插件配置与密钥
   Remove-Item -Recurse -Force "D:\VisionForge"               # 缓存目录（含已下载副本！先备份要留的）
   ```

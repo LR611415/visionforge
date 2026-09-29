@@ -20,7 +20,8 @@
         "LICENSE",
         "docs",
         "README.en.md",
-        "CHANGELOG.md"
+        "CHANGELOG.md",
+        "scripts"
     ],
     "keywords": [
         "dsh",
