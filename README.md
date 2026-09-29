@@ -2,6 +2,8 @@
 
 **给 DeepSeek Harness 装上"眼睛"和"画笔"：视觉理解 + 图片生成 + 图片编辑，一个插件搞定。**
 
+> 🌐 [English](README.en.md) | 中文
+
 VisionForge 基于开源视觉插件 [liustack/modlens](https://github.com/liustack/modlens)（MIT）深度改造而来：接入千问（Qwen）引擎、新增图片生成与编辑能力、内置图形化设置卡片、支持官方 / 插件双解析优先级调度。改造点全部保留原插件的轻量架构——在 DSH 上只是一个插件目录，卸载即删除，不修改任何 DSH 官方组件，不影响原生功能。
 
 > **适配环境**：DSH Desktop **v2.0.14** / DSH harness **0.1.7-rc.2**（2026-09 实测）。DSH 大版本更新可能改变插件接口，升级后请重新验证。
