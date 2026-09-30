@@ -21,12 +21,6 @@ SemVer (with `-rc` prereleases for the harness this plugin targets).
   推断占位符并**合并进模板 JSON**（read → `merged.read`、generate → `merged.generate`、
   extract → `merged.extract.generate.images`），用户无需手拼 JSON 结构。
 
-### Notes
-- **兼容性实测（harness 0.2.0-rc.2 / DSH Desktop v2.0.17）**：0.1.10 的
-  `peerDependencies` 上限为 `<0.2.0-0`，harness 0.2.x 安装时需授予版本豁免；
-  授予后实测读图 / 生图 / 编辑 / 设置卡片 / 预览 / 下载全部正常。下一版本将把
-  上限放宽至 `<0.3.0-0`，0.2.x 用户安装将不再需要豁免。
-
 ## [Unreleased] — local development (not published)
 
 ### Added

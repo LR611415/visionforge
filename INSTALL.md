@@ -25,12 +25,9 @@ that has DeepSeek Harness (desktop or web) installed. If the target machine has
 no `~/.dsh/` directory and no DeepSeek Harness app, installation is not possible;
 tell the user that.
 
-> **Supported environment**: DSH Desktop v2.0.14 / v2.0.17; dsh harness 0.1.7-rc.1 /
-> 0.1.7-rc.2 / 0.2.0-rc.2 (verified 2026-09). Note: 0.1.10's peerDependencies cap at
-> `<0.2.0-0`; on harness 0.2.x the installer asks for a version-waiver grant — verified
-> working, grant it. The next release will widen the cap to `<0.3.0-0`.
-> Newer major releases may change plugin interfaces; if a step fails in a way this
-> document does not cover, report the exact error text.
+> **Supported environment**: DSH Desktop v2.0.14 / dsh harness 0.1.7-rc.2
+> (verified 2026-09). Newer major releases may change plugin interfaces; if a
+> step fails in a way this document does not cover, report the exact error text.
 
 ---
 

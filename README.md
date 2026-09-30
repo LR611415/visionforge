@@ -6,7 +6,7 @@
 
 VisionForge 基于开源视觉插件 [liustack/modlens](https://github.com/liustack/modlens)（MIT）深度改造而来：接入千问（Qwen）引擎、新增图片生成与编辑能力、内置图形化设置卡片、支持官方 / 插件双解析优先级调度。改造点全部保留原插件的轻量架构——在 DSH 上只是一个插件目录，卸载即删除，不修改任何 DSH 官方组件，不影响原生功能。
 
-> **适配环境（已实测）**：DSH Desktop **v2.0.14 / v2.0.17**；DSH harness **0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.2**（2026-09 实测）。0.1.10 的 `peerDependencies` 声明上限为 `<0.2.0-0`，在 harness 0.2.x 上安装需授予版本豁免（实测功能正常）；下一版本将放宽声明上限、免去豁免。DSH 大版本更新可能改变插件接口，升级后请运行 `visionforge doctor` 重新验证。
+> **适配环境**：DSH Desktop **v2.0.14** / DSH harness **0.1.7-rc.2**（2026-09 实测）。DSH 大版本更新可能改变插件接口，升级后请重新验证。
 
 ---
 
