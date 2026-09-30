@@ -4,7 +4,7 @@
 
 VisionForge is a deep rework of the open-source vision plugin [liustack/modlens](https://github.com/liustack/modlens) (MIT): it adds the Qwen engine, image generation and editing, an in-app settings card, and an official/plugin dual parse-priority dispatcher. It keeps the upstream's lightweight architecture — on DSH it is just a plugin directory; removing it deletes everything, no official DSH component is modified, and native functionality is untouched.
 
-> **Supported environment**: DSH Desktop **v2.0.14** / DSH harness **0.1.7-rc.2** (verified 2026-09). DSH major releases may change plugin interfaces — re-verify after an upgrade.
+> **Supported environment (verified 2026-09)**: DSH Desktop **v2.0.14 / v2.0.17**; DSH harness **0.1.7-rc.1 / 0.1.7-rc.2 / 0.2.0-rc.2**. Note: 0.1.10's `peerDependencies` cap at `<0.2.0-0`; on harness 0.2.x the installer asks for a version-waiver grant — verified working, grant it. The next release will widen the cap to `<0.3.0-0`. DSH major releases may change plugin interfaces — re-verify after an upgrade (`visionforge doctor`).
 
 ---
 
