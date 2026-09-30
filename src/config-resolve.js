@@ -9,6 +9,7 @@
 // 冲突时标准键胜出。
 
 import { foldProviderName } from './providers/aliases.js';
+import { isCustomProviderName, readCustomProviders } from './custom-providers.js';
 import { isPlainObject, splitApiKeys } from './util.js';
 
 /** provider → 环境变量绑定。qwen 用本插件的品牌变量名。 */
@@ -57,6 +58,15 @@ function envSettingsFor(providerName, env) {
 
 /** provider 的实际生效设置：文件（单源）或环境变量；顶层 proxy 兜底继承。 */
 export function resolveProviderSettings(providerName, config, env = process.env) {
+    // 自定义引擎：单源 = customProviders 段（不读环境变量，保证 key 只来自用户显式配置）
+    if (isCustomProviderName(providerName, config)) {
+        const entry = readCustomProviders(config)[providerName];
+        const settings = { ...entry };
+        if (!Object.hasOwn(settings, 'proxy') && typeof config.proxy === 'string' && config.proxy.trim()) {
+            settings.proxy = config.proxy.trim();
+        }
+        return settings;
+    }
     const mentioned = providerConfiguredInFile(providerName, config);
     const settings = mentioned ? { ...fileSettingsFor(providerName, config) } : envSettingsFor(providerName, env);
     if (!Object.hasOwn(settings, 'proxy') && typeof config.proxy === 'string' && config.proxy.trim()) {

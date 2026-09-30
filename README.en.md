@@ -20,6 +20,7 @@ VisionForge is a deep rework of the open-source vision plugin [liustack/modlens]
 | ⬇️ One-click download | Click "Save image N" to **copy the cached image to the D: drive root** (falls back to `VisionForge` under the user profile when there is no D:), then **auto-selects the saved file in Explorer**; also bypasses the side panel |
 | ⚖️ Parse priority | `Official first`: official vision models parse when they can, plugin only as fallback; `Plugin first`: always try your configured provider keys first, official only after all fail |
 | ⚙️ Settings card | A "VisionForge 配置" card inside DSH Settings — engine / key / endpoint / model / priority are **all filled in by you**; keys are masked as `••••••` after saving, never hard-coded; the Save button highlights on real changes and greys out after saving |
+| 🧩 Custom engines (translator) | Any vendor beyond the built-ins (Google Gemini, Imagen, OpenAI-compatible gateways, private endpoints) can be added without code changes, via the settings card "Add / edit custom engine" or `visionforge config add-engine`. Names are normalized with guards; the base URL auto-detects the format family; read / generate / edit follow per-model capabilities |
 | 🗂️ Unified directories | Generation cache, paste cache and download directory all converge to fixed locations — nothing scattered in system temp dirs |
 | 🧹 Cache cleanup | Generation and paste caches **expire automatically after 3 days** (swept on plugin start); downloaded permanent copies are unaffected |
 | 🔗 Local loopback service | Preview / zoom / download run through local fixed candidate ports (45999/46999/47999/48999) — no dependence on the provider's temporary OSS links (24h expiry); images from old messages stay previewable/zoomable/downloadable after a DSH restart |
@@ -56,6 +57,51 @@ See Path B in the repo's `INSTALL.md`: copy `dsh/`, `src/`, `skills/`, `cordis.p
 3. **Generate**: say "generate an image of a scarecrow in a field"; the model calls `visionforge_generate_image` and a 90px thumbnail appears in the conversation — **click the image** to zoom with the system viewer, click "Save image N" to download to the D: drive root.
 4. **Edit**: paste 1–3 images and say "change her dress to a white JK skirt"; the model calls `visionforge_edit_image` — with the same preview and download flow.
 
+## Custom engines (engine translator)
+
+Beyond the built-in engines you can add **any vendor** (Google Gemini, Imagen, custom OpenAI-compatible gateways, private endpoints) with no code changes — for reading, text-to-image and image-to-image. The "format family" decides how images are sent to the engine, so you never need to know the difference between `image_url` and `inline_data`.
+
+### From the settings card
+
+1. DSH Settings → VisionForge 配置 card → bottom "**+ Add / edit custom engine**".
+2. Fill in: engine name (auto-normalized to lowercase `a-z0-9._-`; collisions with built-ins are refused, near-miss spellings are hinted), display name (optional), base URL (pasting auto-detects and pre-fills the read family), read family, generate family, API key (can be left empty and filled later), vision model, generation model (fills generation capability).
+3. After saving, the engine appears in the top engine dropdown and can be set as the default.
+
+### From the CLI
+
+```bash
+# read + generate (Google Gemini example)
+visionforge config add-engine google \
+  --base-url https://generativelanguage.googleapis.com \
+  --display-name "Google Gemini" \
+  --read-family gemini --gen-family chat-native \
+  --model gemini-3.1 --gen-model imagen-4.0
+
+visionforge config list-custom              # list custom engines
+visionforge config remove-engine google     # remove
+visionforge config test google              # end-to-end test with a 1×1 placeholder (tiny quota cost)
+```
+
+Keys and models can be filled later via the settings card or `visionforge config set custom.<name>.apiKey`.
+
+### Format families (decide the image upload format)
+
+| Family | Image format | Suitable for |
+| --- | --- | --- |
+| `openai-compatible` (default fallback) | `image_url` + data URI | OpenAI-compatible gateways, Qwen, GLM, Moonshot, DeepSeek, ~90% of vendors |
+| `anthropic` | `image` + `source` base64 block | Anthropic / Claude-compatible endpoints |
+| `gemini` | `inline_data` (remote images are fetched back to base64) | Google Gemini |
+| `raw-base64` | raw base64 fields on private endpoints | private gateways |
+
+Generation families: `dashscope-image` (Qwen-Image native), `openai-image` (`/images/generations`), `chat-native` (Gemini multimodal generation), `google-imagen` (Imagen `:predict` / `:editImage`). Size formats convert per family (`1024*1024` for Qwen, `1024x1024` for OpenAI, ratios like `1:1` for Imagen); unsupported capabilities fail loudly instead of silently.
+
+### Name guards
+
+- Names auto-normalize (case / spaces / hyphens / underscores);
+- Collisions with built-in or existing custom engines are refused with an explanation;
+- Near-miss spellings of built-ins (Levenshtein ≤ 2, e.g. `qwenx` → `qwen`) get a "did you mean the built-in?" hint — never silently renamed;
+- Base URL domains auto-detect the read family and pre-fill it.
+
 ## Settings card fields
 
 | Field | Description |
@@ -73,6 +119,9 @@ See Path B in the repo's `INSTALL.md`: copy `dsh/`, `src/`, `skills/`, `cordis.p
 
 ## Generated-image interaction
 
+- **Quality (default & resolution words)**: when no quality is specified — engines that support 2K (Qwen / Imagen / Gemini) default to **2560×1440 (2K)**; engines that don't (GLM, side limit 2048) default to **their maximum resolution (2048×2048)**. Spoken resolution words are supported: `4K` (3840×2160), `2.5K / 2K` (2560×1440), `1080P / HD` (1920×1080). True 4K exceeds every engine's native ceiling: Qwen downscales to ≈2.7K (2728×1536) by total-pixel limit, GLM downscales 2K to 2048×1152 by side limit, each with a `sizeNote` in the result (never silently downgraded, never faked as 4K).
+- **Downgrade note (`sizeNote`)**: when the engine doesn't support the requested resolution, the result states "the engine doesn't support the requested resolution + the final generated resolution + engines that do support it" (e.g. 2K suggests Qwen / Imagen 4 / Gemini; 4K states no common engine supports it natively and external upscaling is needed).
+- **Edit-prompt auto enhancement**: `edit` defaults to ON — short instructions get protective constraints appended (strictly preserve facial features/hair/body, natural limbs and fingers, keep composition and lighting, no text/watermark); when you explicitly ask to change something (e.g. "change hairstyle"), the matching constraint is skipped. Can be disabled entirely (settings-card toggle or `--no-enhance`).
 - **Thumbnail**: 90px preview in the conversation, pointing at the local loopback cache (no dependency on provider temp links).
 - **Click the image**: the plugin captures the click → requests local `loopback /visionforge/open` → the **system image viewer** opens the cached original (zoom, rotate, save-as); no DSH side panel.
 - **Save image N**: the plugin intercepts the button → requests local `loopback /visionforge/download-local` → the cached image is **copied to the D: drive root** (or `C:\Users\<you>\VisionForge` without D:) + Explorer **auto-selects** the saved file; no side panel.

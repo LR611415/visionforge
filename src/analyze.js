@@ -11,6 +11,8 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 
 import { resolveProviderSettings } from './config-resolve.js';
+import { readCustomProviders } from './custom-providers.js';
+import { classifyFailure } from './diagnose.js';
 import { assertReadableConfig, loadConfigFile } from './config.js';
 import { coolingEngineEntry, coolingEntry } from './cooldown.js';
 import { providerChain, resolveProvider } from './providers/index.js';
@@ -265,7 +267,7 @@ export function composeChain(kind, config, autoOptions, cooldown) {
     let preferredName = null;
     if (config.provider?.trim()) {
         try {
-            preferredName = resolveProvider(config.provider.trim()).name;
+            preferredName = resolveProvider(config.provider.trim(), config).name;
         } catch {
             preferredName = null;
         }
@@ -319,14 +321,14 @@ export async function analyzeImage(options) {
     assertReadableConfig(config);
     const controller = options.cooldown;
     const chain = options.provider
-        ? [resolveProvider(options.provider)]
+        ? [resolveProvider(options.provider, config)]
         : options.providerBin
           ? [resolveProvider('antigravity-cli')]
           : composeChain(resolvedInput.kind, config, options.autoOptions, controller);
     const named = options.provider ?? config.provider?.trim();
     if (named) {
         try {
-            const canonical = resolveProvider(named).name;
+            const canonical = resolveProvider(named, config).name;
             assertNoRetiredEndpointBinding(canonical, resolveProviderSettings(canonical, config));
         } catch (error) {
             if (error instanceof Error && error.message.includes('takes its settings from one place')) {
@@ -467,7 +469,15 @@ export async function analyzeImage(options) {
         }
         throw lastError;
     }
+    const customs = readCustomProviders(config ?? {});
     throw new Error(
-        `Every configured vision provider failed for this image. ${attempts.map((attempt) => `${attempt.provider}: ${attempt.error}`).join(' | ')}${reuseHint(config, options.autoOptions)}`,
+        `Every configured vision provider failed for this image. ${attempts
+            .map((attempt) => {
+                const extra = Object.hasOwn(customs, attempt.provider)
+                    ? classifyFailure({ provider: attempt.provider, error: attempt.error, mode: '读图' })
+                    : null;
+                return `${attempt.provider}: ${attempt.error}${extra ? `（${extra.advice}）` : ''}`;
+            })
+            .join(' | ')}${reuseHint(config, options.autoOptions)}`,
     );
 }

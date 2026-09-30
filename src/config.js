@@ -15,6 +15,7 @@ import * as path from 'path';
 import { listProviders, providerAliases, resolveProvider } from './providers/index.js';
 import { foldProviderName } from './providers/aliases.js';
 import { ENV_BINDINGS, fileKeysFor, fileSettingsFor, providerConfiguredInFile, resolveProviderSettings } from './config-resolve.js';
+import { isCustomProviderName, normalizeCustomProviderEntry, readCustomProviders } from './custom-providers.js';
 import {
     isPlainObject,
     maskUrlCredentials,
@@ -37,6 +38,23 @@ const STRING_FIELDS = ['apiKey', 'baseUrl', 'model', 'visionModel', 'proxy'];
 // 读取
 // ---------------------------------------------------------------------------
 
+export const CONFIG_VERSION = 1;
+
+/**
+ * 配置损坏/结构异常时：把原文件备份为 <path>.bak-<时间戳>，避免用户配置直接丢失。
+ * 返回备份路径（失败返回 null）。
+ */
+function backupBrokenConfig(configPath, kind) {
+    try {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const backupPath = `${configPath}.bak-${stamp}`;
+        fs.copyFileSync(configPath, backupPath);
+        return backupPath;
+    } catch {
+        return null;
+    }
+}
+
 export function loadConfigFile(configPath = CONFIG_PATH) {
     let raw;
     try {
@@ -47,15 +65,38 @@ export function loadConfigFile(configPath = CONFIG_PATH) {
         }
         throw new Error(`Cannot read ${configPath}: ${error.message}. Fix the file or its permissions.`);
     }
+    let parsed;
     try {
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== 'object') {
-            return {};
-        }
-        return parsed;
+        parsed = JSON.parse(raw);
     } catch (error) {
-        throw new Error(`Failed to parse ${configPath}: ${error.message}. Fix or delete the file.`);
+        const backupPath = backupBrokenConfig(configPath, 'parse');
+        throw new Error(
+            `Failed to parse ${configPath}: ${error.message}. ` +
+            `已自动备份损坏文件${backupPath ? `到 ${backupPath}` : '（备份失败）'}，插件将按全新配置运行，请重新填写配置。`,
+        );
     }
+    if (!parsed || typeof parsed !== 'object') {
+        const backupPath = backupBrokenConfig(configPath, 'not-object');
+        throw new Error(
+            `${configPath} 不是合法的配置对象（值为 ${parsed === null ? 'null' : typeof parsed}）。` +
+            `已自动备份到 ${backupPath ?? '（备份失败）'}，插件将按全新配置运行，请重新填写配置。`,
+        );
+    }
+    // 顶层结构校验：类型异常视为损坏，备份后报错（上层按全新配置兜底），不静默忽略。
+    const offences = [];
+    if (parsed.providers !== undefined && !isPlainObject(parsed.providers)) offences.push('providers 应为对象');
+    if (parsed.customProviders !== undefined && !isPlainObject(parsed.customProviders)) offences.push('customProviders 应为对象');
+    if (parsed.provider !== undefined && typeof parsed.provider !== 'string') offences.push('provider 应为字符串');
+    if (parsed.outputDir !== undefined && typeof parsed.outputDir !== 'string') offences.push('outputDir 应为字符串');
+    if (parsed.pasteToPath !== undefined && typeof parsed.pasteToPath !== 'string' && typeof parsed.pasteToPath !== 'boolean') offences.push('pasteToPath 应为字符串或布尔值');
+    if (offences.length > 0) {
+        const backupPath = backupBrokenConfig(configPath, 'schema');
+        throw new Error(
+            `${configPath} 结构异常（${offences.join('、')}）。` +
+            `已自动备份到 ${backupPath ?? '（备份失败）'}，插件将按全新配置运行，请重新填写配置。`,
+        );
+    }
+    return parsed;
 }
 
 export function cooldownEnabled(config) {
@@ -91,10 +132,68 @@ export function setConfigValue(dottedKey, value, configPath = CONFIG_PATH) {
         setReuseValue(config, dottedKey.slice('reuse.'.length), value);
     } else if (dottedKey.startsWith('guards.')) {
         setGuardsValue(config, dottedKey.slice('guards.'.length), value);
+    } else if (dottedKey.startsWith('custom.')) {
+        setCustomProviderField(config, dottedKey.slice('custom.'.length), value);
+    } else if (dottedKey === 'enhanceEditPrompt') {
+        const normalized = value.trim().toLowerCase();
+        if (normalized !== '' && normalized !== 'true' && normalized !== 'false') {
+            throw new Error('enhanceEditPrompt must be true or false (empty clears to default true).');
+        }
+        if (normalized === '') {
+            delete config.enhanceEditPrompt;
+        } else {
+            config.enhanceEditPrompt = normalized === 'true';
+        }
     } else {
         setProviderField(config, dottedKey, value);
     }
     persistConfig(config, configPath);
+}
+
+const CUSTOM_STRING_FIELDS = ['apiKey', 'baseUrl', 'model', 'proxy', 'displayName', 'readFamily', 'genFamily', 'auth'];
+
+/** 自定义引擎字段（custom.<name>.<field> 多级点键）。 */
+function setCustomProviderField(config, dottedKey, value) {
+    const dot = dottedKey.indexOf('.');
+    if (dot <= 0 || dot === dottedKey.length - 1) {
+        throw new Error(
+            `Invalid custom engine key: custom.${dottedKey}. Use custom.<name>.<apiKey|baseUrl|model|proxy|displayName|readFamily|genFamily|structuredOutput|extraBody>.`,
+        );
+    }
+    const name = dottedKey.slice(0, dot);
+    const field = dottedKey.slice(dot + 1);
+    if (!isCustomProviderName(name, config)) {
+        throw new Error(
+            `自定义引擎 "${name}" 不存在。请先用 visionforge config add-engine ${name} --base-url <url> 创建，再配置其字段。`,
+        );
+    }
+    if (config.customProviders !== undefined && !isPlainObject(config.customProviders)) {
+        throw new Error(`The "customProviders" section in ${CONFIG_PATH} is not an object. Fix or remove it, then try again.`);
+    }
+    const entry = config.customProviders[name];
+    if (field === 'structuredOutput') {
+        const normalized = value.trim().toLowerCase();
+        if (normalized !== '' && normalized !== 'true' && normalized !== 'false') {
+            throw new Error(`custom.${name}.structuredOutput must be true or false (empty clears).`);
+        }
+        if (normalized === '') {
+            delete entry.structuredOutput;
+        } else {
+            entry.structuredOutput = normalized === 'true';
+        }
+    } else if (field === 'extraBody') {
+        if (value.trim() === '') {
+            delete entry.extraBody;
+        } else {
+            entry.extraBody = parseExtraBody(value, `custom.${name}.extraBody`);
+        }
+    } else if (CUSTOM_STRING_FIELDS.includes(field)) {
+        entry[field] = value;
+    } else {
+        throw new Error(
+            `Unknown custom engine field: ${field}. Use apiKey, baseUrl, model, proxy, displayName, readFamily, genFamily, structuredOutput, or extraBody.`,
+        );
+    }
 }
 
 function setReuseValue(config, harness, value) {
@@ -161,19 +260,48 @@ function setProviderField(config, dottedKey, value) {
         }
     }
     try {
-        resolveProvider(providerName);
+        resolveProvider(providerName, config);
     } catch {
         const aliases = providerAliases();
         throw new Error(
-            `Unknown provider: ${typedName}. Use one of ${listProviders().join(', ')} (aliases like ${Object.keys(aliases)
+            `Unknown provider: ${typedName}. Use one of ${listProviders(config).join(', ')} (aliases like ${Object.keys(aliases)
                 .filter((alias) => aliases[alias] !== alias)
                 .slice(0, 4)
                 .join(', ')} work too).`,
         );
     }
+    // 自定义引擎的字段写入 customProviders 段（与内置 providers 段隔离）
+    if (isCustomProviderName(providerName, config)) {
+        const entryRoot = config.customProviders ?? {};
+        const entry = isPlainObject(entryRoot[providerName]) ? entryRoot[providerName] : {};
+        if (field === 'structuredOutput') {
+            const normalized = value.trim().toLowerCase();
+            if (normalized !== '' && normalized !== 'true' && normalized !== 'false') {
+                throw new Error(`${providerName}.structuredOutput must be true or false (empty clears).`);
+            }
+            if (normalized === '') {
+                delete entry.structuredOutput;
+            } else {
+                entry.structuredOutput = normalized === 'true';
+            }
+        } else if (field === 'extraBody') {
+            if (value.trim() === '') {
+                delete entry.extraBody;
+            } else {
+                entry.extraBody = parseExtraBody(value, `${providerName}.extraBody`);
+            }
+        } else if (!STRING_FIELDS.includes(field)) {
+            throw new Error(`Unknown config field: ${field}. Use apiKey, baseUrl, model, proxy, extraBody, or structuredOutput.`);
+        } else {
+            entry[field] = value;
+        }
+        config.customProviders ??= {};
+        config.customProviders[providerName] = entry;
+        return;
+    }
     if (field === 'structuredOutput') {
-        if (!['openai', 'qwen'].includes(foldProviderName(providerName))) {
-            throw new Error(`structuredOutput applies to the openai provider only, not ${providerName}.`);
+        if (!['openai', 'qwen'].includes(foldProviderName(providerName)) && !isCustomProviderName(providerName, config)) {
+            throw new Error(`structuredOutput applies to the openai/qwen providers and custom engines only, not ${providerName}.`);
         }
         const normalized = value.trim().toLowerCase();
         if (normalized !== '' && normalized !== 'true' && normalized !== 'false') {
@@ -218,8 +346,9 @@ function parseModelList(value, key) {
 }
 
 export function persistConfig(config, configPath = CONFIG_PATH) {
+    const out = { version: CONFIG_VERSION, ...config };
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+    fs.writeFileSync(configPath, `${JSON.stringify(out, null, 2)}\n`, { mode: 0o600 });
     try {
         fs.chmodSync(configPath, 0o600);
     } catch {
@@ -255,6 +384,19 @@ export function assertReadableConfig(config, configPath = CONFIG_PATH) {
         const offence = entryFieldOffence(entry);
         if (offence !== null) {
             throw sentence(`"providers.${name}"`, offence);
+        }
+    }
+    // 自定义引擎段：结构 + 字段类型校验（normalizeCustomProviderEntry 会点名坏条目）
+    if (config.customProviders !== undefined) {
+        if (!isPlainObject(config.customProviders)) {
+            throw sentence('"customProviders"', 'is not an object');
+        }
+        for (const [name, entry] of Object.entries(config.customProviders)) {
+            try {
+                normalizeCustomProviderEntry(name, entry);
+            } catch (error) {
+                throw new Error(`customProviders.${name} 配置无效：${error.message}`);
+            }
         }
     }
     if (config.saved !== undefined && !isPlainObject(config.saved)) {
@@ -415,6 +557,7 @@ export function useProviderBundle(slot, label, discard = false, configPath = CON
 // ---------------------------------------------------------------------------
 
 const CONFIG_TEMPLATE = {
+    version: CONFIG_VERSION,
     // 空字符串 = 走内置默认 provider。
     provider: '',
     providers: {},
@@ -471,6 +614,14 @@ export function knownApiKeys(config, env = process.env) {
                 for (const apiKey of splitApiKeys(bundle.apiKey)) {
                     keys.add(apiKey);
                 }
+            }
+        }
+    }
+    // 自定义引擎的 key 同样纳入脱敏范围
+    for (const entry of Object.values(readCustomProviders(config))) {
+        if (typeof entry.apiKey === 'string') {
+            for (const apiKey of splitApiKeys(entry.apiKey)) {
+                keys.add(apiKey);
             }
         }
     }
@@ -580,6 +731,23 @@ export function renderEffectiveConfig(config, env = process.env) {
         providers,
         cooldown: config.cooldown ? `${config.cooldown} (file)` : 'on (default)',
     };
+    // 自定义引擎段展示（key 打码）
+    const customs = readCustomProviders(config);
+    if (Object.keys(customs).length > 0) {
+        effective.customProviders = Object.create(null);
+        for (const entry of Object.values(customs)) {
+            const caps = ['read', 'generate', 'edit'].filter((c) => entry.capabilities[c] || entry.models.some((m) => m.capabilities[c]));
+            effective.customProviders[entry.id] = {
+                displayName: entry.displayName,
+                readFamily: entry.readFamily,
+                genFamily: entry.genFamily ?? '(未启用生图)',
+                model: entry.model,
+                baseUrl: entry.baseUrl,
+                apiKey: maskKeys(entry.apiKey),
+                capabilities: caps.join(', ') || 'read',
+            };
+        }
+    }
     const savedRows = [];
     const savedRoot = config.saved;
     if (savedRoot !== undefined && !isPlainObject(savedRoot)) {

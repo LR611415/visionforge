@@ -10,6 +10,7 @@ import * as path from 'path';
 
 import { CONFIG_PATH, REUSE_HARNESSES, assertReadableConfig, cooldownEnabled, knownApiKeys } from './config.js';
 import { currentStatePath, loadCooldownState, parseCooldownStateKey, coolingEntry } from './cooldown.js';
+import { readCustomProviders } from './custom-providers.js';
 import { allowPatterns, denyPatterns, detectActiveModel, evaluateGuard } from './guard.js';
 import { composeChain } from './analyze.js';
 import { PROVIDER_DESCRIPTORS, findOnPath, resolveProvider } from './providers/index.js';
@@ -157,12 +158,38 @@ function inspectProvider(descriptor, config, env) {
     };
 }
 
+function inspectCustomProvider(entry) {
+    const keys = splitApiKeys(entry.apiKey);
+    const hasKey = keys.length > 0;
+    const hasBase = Boolean(entry.baseUrl?.trim());
+    const ready = hasKey && hasBase;
+    const caps = ['read', 'generate', 'edit'].filter((c) => entry.capabilities[c] || entry.models.some((m) => m.capabilities[c]));
+    return {
+        name: entry.id,
+        displayName: entry.displayName,
+        kind: 'custom',
+        ready,
+        status: ready ? 'ready' : 'missing',
+        settings: [
+            { field: 'baseUrl', present: hasBase, source: hasBase ? 'file' : 'missing' },
+            { field: 'apiKey', present: hasKey, source: hasKey ? `file (${keys.length} ${keys.length === 1 ? 'key' : 'keys'})` : 'missing' },
+            { field: 'readFamily', present: true, source: entry.readFamily },
+        ],
+        detail: ready
+            ? `custom engine "${entry.displayName}" (read: ${entry.readFamily}${entry.genFamily ? `, generate: ${entry.genFamily}` : ''}; ${caps.join('/') || 'read'}) @ ${entry.baseUrl}`
+            : `missing: ${[!hasBase && 'baseUrl', !hasKey && 'apiKey'].filter(Boolean).join(', ')}`,
+        fix: ready
+            ? undefined
+            : `visionforge config set custom.${entry.id}.baseUrl <url> and custom.${entry.id}.apiKey (hidden prompt)`,
+    };
+}
+
 function resolveSelection(config, providerFlag) {
     const raw = providerFlag?.trim() || config.provider?.trim() || 'antigravity-cli';
     const source = providerFlag?.trim() ? 'flag' : config.provider?.trim() ? 'config' : 'default';
     let canonical;
     try {
-        canonical = resolveProvider(raw).name;
+        canonical = resolveProvider(raw, config).name;
     } catch {
         canonical = null;
     }
@@ -242,6 +269,80 @@ function diagnoseCooldown(config, statePath, now, env) {
     return { enabled: true, statePath, providers };
 }
 
+function dirStats(dir) {
+    let size = 0;
+    let count = 0;
+    try {
+        for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
+            const full = path.join(dir, item.name);
+            if (item.isDirectory()) {
+                const sub = dirStats(full);
+                size += sub.size;
+                count += sub.count;
+            } else {
+                size += fs.statSync(full).size;
+                count++;
+            }
+        }
+    } catch { /* missing/unreadable dir counts as empty */ }
+    return { size, count };
+}
+
+/** E2：卸载残留检查 —— 列出插件在本机留下的全部足迹（config/缓存/dsh 安装/env）。 */
+export function uninstallFootprint(input = {}) {
+    const home = input.home ?? os.homedir();
+    const config = input.config ?? {};
+    const configDir = path.join(home, '.visionforge');
+    const entries = [];
+    const add = (label, dir) => {
+        let exists = false;
+        let size = 0;
+        let count = 0;
+        try {
+            const s = dirStats(dir);
+            exists = true;
+            size = s.size;
+            count = s.count;
+        } catch { /* not present */ }
+        entries.push({ label, path: dir, exists, count, size });
+    };
+    add('config dir', configDir);
+    const configuredOutput = typeof config.outputDir === 'string' && config.outputDir.trim() !== '' ? config.outputDir : '';
+    if (process.platform === 'win32') {
+        if (configuredOutput) {
+            const root = path.dirname(configuredOutput);
+            add('output/cache dir (configured)', root);
+            add('features dir', path.join(root, 'features'));
+        } else {
+            add('default cache root (D:\VisionForge)', 'D:\VisionForge');
+            add('features dir', path.join('D:\VisionForge', 'features'));
+        }
+        add('fallback cache root (~/VisionForge)', path.join(home, 'VisionForge'));
+    } else {
+        add('output dir', path.join(configDir, 'out'));
+    }
+    // DSH profile 安装足迹（node_modules 包 + package.json 依赖/ bundles 条目）
+    const profiles = [];
+    try {
+        const profilesDir = path.join(home, '.dsh', 'profiles');
+        for (const profile of fs.readdirSync(profilesDir, { withFileTypes: true })) {
+            if (!profile.isDirectory()) continue;
+            const pkgPath = path.join(profilesDir, profile.name, 'package.json');
+            let pkg;
+            try { pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8')); } catch { continue; }
+            const dependency = Object.keys(pkg.dependencies ?? {}).includes('@lr611/visionforge');
+            const bundle = (pkg.dsh?.profile?.bundles ?? []).includes('@lr611/visionforge');
+            const installedDir = path.join(profilesDir, profile.name, 'node_modules', '@lr611', 'visionforge');
+            const installed = fs.existsSync(installedDir);
+            if (dependency || bundle || installed) {
+                profiles.push({ profile: profile.name, dependency, bundle, installedDir: installed ? installedDir : null });
+            }
+        }
+    } catch { /* no dsh profiles */ }
+    const envVars = Object.keys(input.env ?? process.env).filter((k) => k.startsWith('VISIONFORGE_'));
+    return { entries, profiles, envVars };
+}
+
 export function buildDoctorReport(input) {
     const env = input.env ?? process.env;
     const configPath = input.configPath ?? CONFIG_PATH;
@@ -265,7 +366,10 @@ export function buildDoctorReport(input) {
             meetsMinimum: meetsMinimum(process.version, MIN_NODE),
         },
         nodeSqlite: checkNodeSqlite(),
-        providers: PROVIDER_DESCRIPTORS.map((d) => inspectProvider(d, input.config, env)),
+        providers: [
+            ...PROVIDER_DESCRIPTORS.map((d) => inspectProvider(d, input.config, env)),
+            ...Object.values(readCustomProviders(input.config)).map((entry) => inspectCustomProvider(entry)),
+        ],
         selection: resolveSelection(input.config, input.providerFlag),
         // 一次运行真正会用的链（含被复用的路由并标注），
         // 这样一台全靠授权登录跑活的机器不会在 Reuse 已授权的情况下被误读成"无引擎"。
@@ -287,6 +391,7 @@ export function buildDoctorReport(input) {
         },
         config: inspectConfigFile(configPath),
         cooldown: diagnoseCooldown(input.config, statePath, now, env),
+        uninstall: input.uninstallCheck ? uninstallFootprint({ home: input.home, config: input.config, env }) : undefined,
         reuse: {
             decisions: Object.fromEntries(
                 REUSE_HARNESSES.map((harness) => {
@@ -394,6 +499,25 @@ export function renderDoctorReport(report) {
         lines.push(`  ${probe.harness}: ${parts.join(', ')}`);
     }
     lines.push('');
+    if (report.uninstall) {
+        lines.push('Uninstall footprint (what uninstalling leaves behind)');
+        for (const entry of report.uninstall.entries) {
+            const size = entry.size >= 1048576 ? `${(entry.size / 1048576).toFixed(1)} MB` : entry.size >= 1024 ? `${(entry.size / 1024).toFixed(1)} KB` : `${entry.size} B`;
+            lines.push(`  ${entry.exists ? '[found]' : '[none] '} ${entry.label}: ${entry.path}${entry.exists ? ` (${entry.count} file(s), ${size})` : ''}`);
+        }
+        if (report.uninstall.profiles.length > 0) {
+            lines.push('  dsh profiles:');
+            for (const p of report.uninstall.profiles) {
+                lines.push(`    - ${p.profile}: dependency=${p.dependency}, bundle=${p.bundle}${p.installedDir ? `, installed dir=${p.installedDir}` : ''}`);
+            }
+        }
+        if (report.uninstall.envVars.length > 0) {
+            lines.push(`  env vars: ${report.uninstall.envVars.join(', ')}`);
+        }
+        lines.push('  To remove everything: delete the entries above (config dir, cache root, and the');
+        lines.push('  dsh profile dependency/bundle lines), then restart DSH.');
+        lines.push('');
+    }
     lines.push('Config file');
     lines.push(`  path: ${report.config.path}`);
     if (report.config.exists) {

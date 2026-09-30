@@ -148,6 +148,21 @@ npx @lr611/visionforge config set <engine>.model <MODEL>         # 用户选择�
 > write fails, the home directory is not writable — confirm the user profile
 > path before retrying.
 
+### 自定义引擎（可选，任何厂商）
+
+内置引擎之外的厂商（Google Gemini、Imagen、OpenAI 兼容网关等）无需改代码即可接入。同样遵循"用户自己填、可跳过"：
+
+1. 推荐引导用户用**设置卡片**：VisionForge 配置卡片底部「+ 添加 / 编辑自定义引擎」——名称自动规范化（重名 / 拼写有护栏提示）、接口地址粘贴后自动识别协议族、密钥可留空稍后补。
+2. CLI 等价命令（用户提供自己的值）：
+
+```powershell
+npx @lr611/visionforge config add-engine google --base-url https://generativelanguage.googleapis.com --display-name "Google Gemini" --read-family gemini --gen-family chat-native --model gemini-3.1 --gen-model imagen-4.0
+npx @lr611/visionforge config list-custom
+npx @lr611/visionforge config test google     # 1×1 占位图实测，花极少配额
+```
+
+3. 用户跳过 → 完全不影响安装，之后随时补。详见 `docs/engine-adapter-design.md`。
+
 ---
 
 ## Step 3: verify with doctor

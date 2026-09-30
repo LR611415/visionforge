@@ -21,7 +21,7 @@ const QWEN_RESERVED = ['model', 'messages', 'stream'];
  * image_analysis/scene/subject/attire 之类）。此函数把可用信息归纳成
  * VISION_RESULT_SCHEMA 结构，不丢内容、不抛错，保证 analyze 有结果可用。
  */
-function normalizeLooseVision(free, missingFields) {
+export function normalizeLooseVision(free, missingFields) {
     const result = {
         summary: '',
         ocr: { full_text: '', lines: [] },

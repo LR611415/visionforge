@@ -398,6 +398,19 @@ window.__ModuleLoader__.load({
         save: 'Save',
         openFull: 'Open full settings page',
         saved: 'Saved',
+        devOptions: 'Developer options (response format / timeout / proxy / extraBody)',
+        respFormat: 'Response format (structuredOutput)',
+        respFollow: 'Follow engine (default)',
+        respStrict: 'Force structured output (read JSON schema)',
+        respOff: 'Off',
+        timeoutMs: 'Request timeout (ms)',
+        proxyMode: 'Proxy mode',
+        proxyInherit: 'Inherit global (default)',
+        proxyDirect: 'Force direct',
+        proxyCustom: 'Custom proxy',
+        extraBody: 'Request body extra (extraBody JSON)',
+        reqTemplate: 'Custom request template (official JSON fallback)',
+        reqTemplateHint: 'Only for engines whose request format is incompatible with built-in protocol families. Paste official request/response JSON examples (see web settings page) into this template JSON; placeholders: {{PROMPT}} / {{IMAGE1..3}} / {{MODEL}} / {{API_KEY}} / {{BASE_URL}} / {{SIZE}} / {{SIZE_X}}(1024x1024) / {{SIZE_STAR}}(1024*1024) / {{COUNT}}. Whole-node {{COUNT}}/{{SIZE}} placeholders keep numeric types automatically. Leave empty = off',
         customModel: 'Custom…',
         masked: 'Configured (masked)',
         notConfigured: 'Not configured',
@@ -419,6 +432,19 @@ window.__ModuleLoader__.load({
         save: '保存',
         openFull: '打开完整设置页',
         saved: '已保存',
+        devOptions: '开发者选项（响应格式 / 超时 / 代理 / 请求体扩展）',
+        respFormat: '响应格式（structuredOutput）',
+        respFollow: '跟随引擎（默认）',
+        respStrict: '强制结构化输出（读图 JSON schema）',
+        respOff: '关闭',
+        timeoutMs: '请求超时（毫秒）',
+        proxyMode: '代理模式',
+        proxyInherit: '继承全局（默认）',
+        proxyDirect: '强制直连',
+        proxyCustom: '自定义代理',
+        extraBody: '请求体扩展（extraBody JSON）',
+        reqTemplate: '自定义请求模板（官方 JSON 兜底）',
+        reqTemplateHint: '仅当该引擎请求格式与内置协议族不兼容时使用。填写模板 JSON（可在网页设置页粘贴官方示例自动生成）；占位符：{{PROMPT}} / {{IMAGE1..3}} / {{MODEL}} / {{API_KEY}} / {{BASE_URL}} / {{SIZE}} / {{SIZE_X}}(1024x1024) / {{SIZE_STAR}}(1024*1024) / {{COUNT}}。{{COUNT}}/{{SIZE}} 类占位符整节点出现时自动保持数字类型。请勿在模板中填写真实密钥/地址，统一用占位符（真实值由引擎设置自动注入）。留空 = 关闭',
         customModel: '自定义…',
         masked: '已配置（掩码显示）',
         notConfigured: '未配置',
@@ -460,6 +486,21 @@ window.__ModuleLoader__.load({
       if (typeof values.visionPriority === 'string' && values.visionPriority !== (current.visionPriority || 'official')) draft.visionPriority = values.visionPriority
       if (typeof values.outputDir === 'string' && values.outputDir !== (current.outputDir || '')) draft.outputDir = values.outputDir
       if (typeof values.pasteToPath === 'boolean' && values.pasteToPath !== (current.pasteToPath !== false)) draft.pasteToPath = values.pasteToPath
+      if (typeof values.structuredOutput === 'string' && values.structuredOutput !== (typeof current.structuredOutput === 'string' ? current.structuredOutput : '')) draft.structuredOutput = values.structuredOutput === '' ? '' : values.structuredOutput === 'true'
+      if (typeof values.timeoutMs === 'string' && values.timeoutMs !== (typeof current.timeoutMs === 'string' ? current.timeoutMs : '')) draft.timeoutMs = values.timeoutMs
+      if (typeof values.extraBody === 'string' && values.extraBody !== (typeof current.extraBody === 'string' ? current.extraBody : '')) draft.extraBody = values.extraBody
+      if (typeof values.proxyMode === 'string' && values.proxyMode !== (current.proxyMode || 'inherit')) draft.proxyMode = values.proxyMode
+      if (typeof values.proxy === 'string' && values.proxy !== (current.proxy || '')) draft.proxy = values.proxy
+      if (typeof values.requestTemplate === 'string' && values.requestTemplate.trim() !== (typeof current.requestTemplate === 'string' ? current.requestTemplate : '').trim()) {
+        var rtRaw = values.requestTemplate.trim()
+        if (rtRaw === '') draft.requestTemplate = ''
+        else {
+          try {
+            var rtObj = JSON.parse(rtRaw)
+            draft.requestTemplate = rtObj && typeof rtObj === 'object' ? rtObj : rtRaw
+          } catch (e) { draft.requestTemplate = rtRaw }
+        }
+      }
       return draft
     }
 
@@ -487,6 +528,7 @@ window.__ModuleLoader__.load({
       var useState = react.useState
       var useEffect = react.useEffect
       var div = react.createElement('div', null)
+      var CustomSectionComp = CustomSection(react, ui)
 
       function Field(props) {
         return react.createElement(
@@ -501,10 +543,81 @@ window.__ModuleLoader__.load({
         var lang = localeRef()
         var values = props.values
         var current = props.current || {}
-        var engineMeta = ENGINES.find(function (e) { return e.id === values.engine }) || ENGINES[3]
+        var enginesMeta = props.enginesMeta || {}
+        var engineMeta = enginesMeta[values.engine] || enginesMeta['qwen'] || { label: 'Qwen', keyless: false, models: [] }
         var isKeyless = !!engineMeta.keyless
         var models = engineMeta.models || []
         var modelKnown = models.indexOf(values.model) !== -1
+        var addOpenState = react.useState(false)
+        var addOpen = addOpenState[0]
+        var devOpenState = react.useState(false)
+        var devOpen = devOpenState[0]
+        var extraState = react.useState({})
+        var extra = extraState[0]
+        var sampleState = react.useState('')
+        var sample = sampleState[0]
+        var inferBusyState = react.useState(false)
+        var inferBusy = inferBusyState[0]
+        var inferMsgState = react.useState('')
+        var inferMsg = inferMsgState[0]
+        function guessKind(obj) {
+          if (!obj || typeof obj !== 'object') return ''
+          var s = JSON.stringify(obj)
+          var hasMessages = /"messages"|"contents"/.test(s)
+          var hasImage = /"image"|"inline_data"|"image_url"|"input_image"|"init_image"|"reference_images"/.test(s)
+          var hasPrompt = /"prompt"|"query"|"text"|"question"/.test(s)
+          var hasSizeNum = /"size"|"n"|"num"|"count"|"sample_count"/.test(s)
+          if (hasMessages && (hasImage || hasPrompt)) return 'read'
+          if (/"(url|b64_json|img_url|image_url)"/.test(s) && /"data"|"output"|"result"/.test(s)) return 'extract'
+          if (/"(url|b64_json|img_url)"/.test(s)) return 'extract'
+          if (hasPrompt && hasSizeNum && !hasMessages) return 'generate'
+          if (hasImage && hasPrompt) return 'generate'
+          return ''
+        }
+        function inferTemplate(kind) {
+          if (inferBusy) return
+          var sampleText = sample.trim()
+          if (!sampleText) { inferMsgState[1]('请先粘贴官网示例 JSON'); return }
+          var obj
+          try { obj = JSON.parse(sampleText) } catch (e) { inferMsgState[1]('示例不是合法 JSON：' + e.message); return }
+          inferBusyState[1](true); inferMsgState[1]('识别中…')
+          fetch('/visionforge/settings/infer-template', {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ kind: kind, sample: obj }),
+          })
+            .then(function (r) { return r.json() })
+            .then(function (res) {
+              inferBusyState[1](false)
+              if (!res.ok) { inferMsgState[1]('生成失败：' + (res.error || '')); return }
+              var out = res.template
+              if (out === null || out === undefined || (Array.isArray(out) && out.length === 0)) {
+                inferMsgState[1]('未能识别示例中的可变字段，请粘贴更完整的官网示例，或手动填写下方模板 JSON')
+                return
+              }
+              var prev = null
+              try { prev = values.requestTemplate ? JSON.parse(values.requestTemplate) : null } catch (e) {}
+              var merged = prev && typeof prev === 'object' ? prev : {}
+              if (kind === 'read') merged.read = out
+              else if (kind === 'generate') merged.generate = out
+              else if (kind === 'extract') { if (!merged.extract || typeof merged.extract !== 'object') merged.extract = {}; merged.extract.generate = { images: out } }
+              set('requestTemplate', JSON.stringify(merged, null, 2))
+              inferMsgState[1]('✓ 已合并到下方模板 JSON（可再编辑，核对后点保存）')
+            })
+            .catch(function (e) { inferBusyState[1](false); inferMsgState[1]('请求失败：' + e.message) })
+        }
+        function autoGuess() {
+          var sampleText = sample.trim()
+          if (!sampleText) { inferMsgState[1]('请先粘贴官网示例 JSON'); return }
+          var obj
+          try { obj = JSON.parse(sampleText) } catch (e) { inferMsgState[1]('示例不是合法 JSON：' + e.message); return }
+          var kind = guessKind(obj)
+          if (!kind) { inferMsgState[1]('无法自动判断类型，请点上方按钮手动指定（读图示例 / 生图示例 / 响应示例）'); return }
+          inferTemplate(kind)
+        }
+        var extraMerged = {}
+        for (var ek in extra) if (!Object.hasOwn(props.enginesMeta, ek)) extraMerged[ek] = extra[ek]
+        var allMeta = Object.assign({}, props.enginesMeta, extraMerged)
+        var knownIds = Object.keys(allMeta)
 
         function set(field, value) {
           var next = {}
@@ -518,15 +631,44 @@ window.__ModuleLoader__.load({
             react.createElement('select', {
               style: inputStyle,
               value: values.engine || 'qwen',
-              onChange: function (e) { set('engine', e.target.value) },
+              onChange: function (e) {
+                var v = e.target.value
+                if (v === '__add_custom__') {
+                  e.target.value = values.engine || 'qwen'
+                  addOpenState[1](true)
+                  return
+                }
+                set('engine', v)
+              },
             },
-              ENGINES.map(function (e) {
-                return react.createElement('option', { key: e.id, value: e.id }, e.label)
+              knownIds.map(function (id) {
+                var meta = allMeta[id]
+                var label = meta.label || id
+                if (meta.keyless && meta.cliReady === false) label += '（未检测到 CLI）'
+                return react.createElement('option', { key: id, value: id }, label)
               }),
+              react.createElement('option', { key: '__add_custom__', value: '__add_custom__', style: { color: '#1668dc', fontWeight: 600 } }, '＋ 添加自定义引擎…'),
             ),
           ),
+          addOpen
+            ? react.createElement(CustomSectionComp, {
+                knownIds: knownIds,
+                customs: props.customs || [],
+                onChanged: props.onCustomChanged,
+                onAdd: function (id) {
+                  var extra2 = {}
+                  for (var ek2 in extra) extra2[ek2] = extra[ek2]
+                  extra2[id] = { label: id + '（自定义）', keyless: false, baseUrl: '', model: '', hasKey: false, models: [], custom: true }
+                  extraState[1](extra2)
+                  set('engine', id)
+                  addOpenState[1](false)
+                },
+                onClose: function () { addOpenState[1](false) },
+              })
+            : null,
           isKeyless
-            ? react.createElement('div', { style: { fontSize: 12, color: '#0a7', marginTop: 10 } }, '✓ ' + TEXT[lang].masked)
+            ? react.createElement('div', { style: { fontSize: 12, color: '#0a7', marginTop: 10 } },
+                '✓ 免密钥：需本机已安装并登录 ' + (engineMeta.cliCmd || '对应') + ' CLI' + (engineMeta.cliReady === false ? '（未检测到，请先安装并登录）' : '') + '；未登录时读图/生图会失败')
             : react.createElement(Field, { label: TEXT[lang].apiKey },
                 react.createElement('input', Object.assign({}, secretFieldProps(), {
                   style: inputStyle,
@@ -570,6 +712,18 @@ window.__ModuleLoader__.load({
                 })
               : null,
           ),
+          react.createElement(Field, { label: '分辨率能力（可选）' },
+            react.createElement('input', {
+              style: inputStyle,
+              value: values.sizeCap || '',
+              onChange: function (e) { set('sizeCap', e.target.value) },
+              placeholder: '如 2K / 4K / 4096x4096（留空 = 跟随引擎通用上限）',
+              autoComplete: 'off',
+            }),
+            react.createElement('div', { style: { fontSize: 11, color: '#999', marginTop: 3 } },
+              '声明该引擎/模型的分辨率能力上限；不填时按协议族通用上限（OpenAI 兼容默认 2048，qwen 系默认 2K）',
+            ),
+          ),
           react.createElement(Field, { label: TEXT[lang].priority },
             react.createElement('select', {
               style: inputStyle,
@@ -579,6 +733,102 @@ window.__ModuleLoader__.load({
               react.createElement('option', { value: 'official' }, TEXT[lang].priorityOfficial),
               react.createElement('option', { value: 'plugin' }, TEXT[lang].priorityPlugin),
             ),
+          ),
+          react.createElement('details', { style: { marginTop: 12, borderTop: '1px solid rgba(128,128,128,.25)', paddingTop: 6 } },
+            react.createElement('summary', { style: { cursor: 'pointer', fontSize: 13, color: '#7ab', userSelect: 'none', padding: '4px 0' }, onClick: function () { devOpenState[1](!devOpen) } }, TEXT[lang].devOptions),
+            devOpen
+              ? react.createElement('div', null,
+                  react.createElement(Field, { label: TEXT[lang].respFormat },
+                    react.createElement('select', {
+                      style: inputStyle,
+                      value: values.structuredOutput === undefined || values.structuredOutput === '' ? '' : String(values.structuredOutput),
+                      onChange: function (e) { set('structuredOutput', e.target.value) },
+                    },
+                      react.createElement('option', { value: '' }, TEXT[lang].respFollow),
+                      react.createElement('option', { value: 'true' }, TEXT[lang].respStrict),
+                      react.createElement('option', { value: 'false' }, TEXT[lang].respOff),
+                    ),
+                  ),
+                  react.createElement(Field, { label: TEXT[lang].timeoutMs },
+                    react.createElement('input', {
+                      style: inputStyle,
+                      value: values.timeoutMs || '',
+                      placeholder: '留空 = 引擎默认（读图约 60s，生图约 120s）',
+                      onChange: function (e) { set('timeoutMs', e.target.value) },
+                    }),
+                  ),
+                  react.createElement(Field, { label: TEXT[lang].proxyMode },
+                    react.createElement('select', {
+                      style: inputStyle,
+                      value: values.proxyMode || 'inherit',
+                      onChange: function (e) { set('proxyMode', e.target.value) },
+                    },
+                      react.createElement('option', { value: 'inherit' }, TEXT[lang].proxyInherit),
+                      react.createElement('option', { value: 'direct' }, TEXT[lang].proxyDirect),
+                      react.createElement('option', { value: 'custom' }, TEXT[lang].proxyCustom),
+                    ),
+                    react.createElement('input', {
+                      style: Object.assign({}, inputStyle, { marginTop: 6 }),
+                      value: values.proxy || '',
+                      placeholder: 'http://127.0.0.1:7890（选「自定义代理」时填写）',
+                      onChange: function (e) { set('proxy', e.target.value) },
+                    }),
+                  ),
+                  react.createElement(Field, { label: TEXT[lang].extraBody },
+                    react.createElement('textarea', {
+                      style: Object.assign({}, inputStyle, { minHeight: 44, fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12 }),
+                      value: values.extraBody || '',
+                      placeholder: '{"thinking":{"type":"disabled"}}（厂商特殊开关；留空 = 无）',
+                      onChange: function (e) { set('extraBody', e.target.value) },
+                    }),
+                  ),
+                  react.createElement(Field, { label: TEXT[lang].reqTemplate },
+                    react.createElement('div', { style: { marginBottom: 6, padding: 8, background: 'rgba(128,128,128,.08)', borderRadius: 8 } },
+                      react.createElement('div', { style: { fontSize: 11, color: '#888', marginBottom: 4 } },
+                        '不会填模板？把官网的「请求 / 响应示例 JSON」整段粘贴到下面，点按钮自动生成并合并到模板框（无需手拼结构）：',
+                      ),
+                      react.createElement('textarea', {
+                        style: Object.assign({}, inputStyle, { minHeight: 52, fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12 }),
+                        value: sample,
+                        placeholder: '{"model":"...","prompt":"一只猫","size":"1024x1024","n":1}（请求或响应均可，可含 url/headers/body 顶层结构）',
+                        onChange: function (e) { sampleState[1](e.target.value) },
+                      }),
+                      react.createElement('div', { style: { display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' } },
+                        react.createElement('button', {
+                          onClick: autoGuess,
+                          disabled: inferBusy,
+                          style: { padding: '5px 12px', border: 0, borderRadius: 6, background: '#1668dc', color: '#fff', fontSize: 12, cursor: inferBusy ? 'default' : 'pointer' },
+                        }, '自动识别类型'),
+                        react.createElement('button', {
+                          onClick: function () { inferTemplate('read') },
+                          disabled: inferBusy,
+                          style: { padding: '5px 10px', border: '1px solid rgba(128,128,128,.4)', borderRadius: 6, background: 'transparent', fontSize: 12, cursor: inferBusy ? 'default' : 'pointer' },
+                        }, '读图示例'),
+                        react.createElement('button', {
+                          onClick: function () { inferTemplate('generate') },
+                          disabled: inferBusy,
+                          style: { padding: '5px 10px', border: '1px solid rgba(128,128,128,.4)', borderRadius: 6, background: 'transparent', fontSize: 12, cursor: inferBusy ? 'default' : 'pointer' },
+                        }, '生图示例'),
+                        react.createElement('button', {
+                          onClick: function () { inferTemplate('extract') },
+                          disabled: inferBusy,
+                          style: { padding: '5px 10px', border: '1px solid rgba(128,128,128,.4)', borderRadius: 6, background: 'transparent', fontSize: 12, cursor: inferBusy ? 'default' : 'pointer' },
+                        }, '响应示例'),
+                      ),
+                      inferMsg
+                        ? react.createElement('div', { style: { fontSize: 11, color: /失败|错误|无法/.test(inferMsg) ? '#e5484d' : '#0a7', marginTop: 4 } }, inferMsg)
+                        : null,
+                    ),
+                    react.createElement('textarea', {
+                      style: Object.assign({}, inputStyle, { minHeight: 64, fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 12 }),
+                      value: values.requestTemplate || '',
+                      placeholder: '{"enabled":true,"read":{...},"generate":{...},"extract":{...}}',
+                      onChange: function (e) { set('requestTemplate', e.target.value) },
+                    }),
+                    react.createElement('div', { style: { fontSize: 11, color: '#999', marginTop: 3 } }, TEXT[lang].reqTemplateHint),
+                  ),
+                )
+              : null,
           ),
           react.createElement(Field, { label: TEXT[lang].outputDir },
             react.createElement('input', {
@@ -636,6 +886,9 @@ window.__ModuleLoader__.load({
           current: props.current,
           dirty: props.dirty,
           note: props.note,
+          enginesMeta: props.enginesMeta,
+          customs: props.customs,
+          onCustomChanged: props.onCustomChanged,
           onValues: props.onValues,
           onSave: props.onSave,
         })
@@ -655,6 +908,78 @@ window.__ModuleLoader__.load({
       color: 'inherit',
     }
 
+    // 自定义引擎（翻译器）：由引擎下拉"＋ 添加自定义引擎…"展开（受控组件）。
+    // 只填引擎名称；接口地址/API 密钥/模型用卡片下方通用字段填写，点主「保存」后生效。
+    function CustomSection(react, ui) {
+      var useState = react.useState
+      var famLabel = { 'openai-compatible': 'OpenAI 兼容', anthropic: 'Anthropic', gemini: 'Gemini', 'raw-base64': '私有端点', 'dashscope-image': 'DashScope 生图', 'openai-image': 'OpenAI 生图', 'chat-native': '原生对话生图', 'google-imagen': 'Imagen' }
+      function label2(v) { return famLabel[v] || v || '—' }
+      function normalizeName(input) {
+        var s = String(input || '').trim()
+        if (!s) return { id: '', error: '引擎名称不能为空' }
+        var id = s.toLowerCase().replace(/[\s_]+/g, '-').replace(/-+/g, '-')
+        if (!/^[\p{L}\p{N}][\p{L}\p{N}._-]{0,38}$/u.test(id) || /^[.\-]/.test(id)) return { id: '', error: '引擎名称不规范：仅允许字母（含中文）、数字、点、下划线、连字符（≤40 字符，不能以点或连字符开头）' }
+        return { id: id, error: '' }
+      }
+      function Section(props) {
+        var customs = props.customs || []
+        var knownIds = props.knownIds || []
+        var nameState = useState('')
+        var busyState = useState(false)
+        var msgState = useState('')
+        var name = nameState[0], busy = busyState[0], msg = msgState[0]
+        function confirm() {
+          var norm = normalizeName(name)
+          if (norm.error) { msgState[1](norm.error); return }
+          if (knownIds.indexOf(norm.id) !== -1) { msgState[1]('与现有引擎重名：' + norm.id); return }
+          props.onAdd(norm.id)
+        }
+        function remove(id) {
+          if (!window.confirm('删除自定义引擎「' + id + '」？')) return
+          busyState[1](true); msgState[1]('删除中…')
+          fetch('/visionforge/settings', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ custom: { action: 'remove', name: id } }),
+          })
+            .then(function (r) { return r.json().then(function (b) { if (!r.ok) throw new Error(b.error || '删除失败'); return b }) })
+            .then(function () { msgState[1]('已删除'); props.onChanged() })
+            .catch(function (e) { msgState[1]('删除失败: ' + ((e && e.message) || e)) })
+            .finally(function () { busyState[1](false) })
+        }
+        return react.createElement('div', { style: { marginTop: 10, border: '1px solid rgba(76,111,255,.35)', borderRadius: 10, padding: 12 } },
+          react.createElement('div', { style: { fontSize: 13, fontWeight: 600, color: '#555' } }, '添加自定义引擎'),
+          react.createElement('div', { style: { fontSize: 11, color: '#999', marginTop: 3 } }, '只需填写引擎名称；接口地址、API 密钥、模型用下方通用字段填写，完成后点「保存」即生效'),
+          react.createElement('label', { style: lblStyle }, '引擎名称'),
+          react.createElement('input', { style: inputStyle, value: name, onChange: function (e) { nameState[1](e.target.value); msgState[1]('') }, placeholder: '例如 google', autoComplete: 'off' }),
+          react.createElement('div', { style: { marginTop: 10, display: 'flex', gap: 10, alignItems: 'center' } },
+            react.createElement('button', { type: 'button', disabled: busy, style: btnStyle, onClick: function () { confirm() } }, '确认添加'),
+            react.createElement('a', { href: '#', style: { fontSize: 13, color: '#888' }, onClick: function (e) { e.preventDefault(); props.onClose() } }, '取消'),
+          ),
+          msg ? react.createElement('div', { style: { fontSize: 12, color: /失败|重名|不规范|不能为空/.test(msg) ? '#e5484d' : '#0a7', marginTop: 6 } }, msg) : null,
+          customs.length > 0
+            ? react.createElement('div', { style: { marginTop: 10, borderTop: '1px solid rgba(128,128,128,.2)', paddingTop: 8 } },
+                react.createElement('div', { style: { fontSize: 12, fontWeight: 600, color: '#888', marginBottom: 4 } }, '已添加的自定义引擎（下拉选中后用下方字段编辑，点保存生效）'),
+                customs.map(function (c) {
+                  return react.createElement('div', { key: c.id, style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginTop: 4 } },
+                    react.createElement('span', { style: { fontWeight: 600 } }, c.displayName || c.id),
+                    react.createElement('span', { style: { color: '#888', fontSize: 12 } }, '(' + c.id + ')'),
+                    react.createElement('span', { style: { color: '#0a7', fontSize: 12 } }, label2(c.readFamily) + (c.genFamily ? ' / ' + label2(c.genFamily) : '')),
+                    c.failedReason
+                      ? react.createElement('span', { style: { color: '#c33', fontSize: 12, marginLeft: 6, cursor: 'help', title: c.failedReason } }, '⚠ 上次失败')
+                      : null,
+                    react.createElement('a', { href: '#', style: { color: '#c33', fontSize: 12 }, onClick: function (e) { e.preventDefault(); remove(c.id) } }, '删除'),
+                  )
+                }),
+              )
+            : null,
+        )
+      }
+      return Section
+    }
+    var lblStyle = { display: 'block', fontSize: 13, fontWeight: 600, margin: '12px 0 4px', color: '#888' }
+    var btnStyle = { padding: '8px 22px', border: 0, borderRadius: 8, background: '#1668dc', color: '#fff', font: 'inherit', fontSize: 13, cursor: 'pointer' }
+
     function seedDraft(summary) {
       var engine = (summary && summary.provider) || 'qwen'
       var eng = (summary && summary.engines && summary.engines[engine]) || {}
@@ -664,9 +989,16 @@ window.__ModuleLoader__.load({
         hasKey: !!eng.hasKey,
         baseUrl: typeof eng.baseUrl === 'string' ? eng.baseUrl : '',
         model: typeof eng.model === 'string' ? eng.model : '',
+        sizeCap: typeof eng.sizeCap === 'string' ? eng.sizeCap : '',
         visionPriority: (summary && summary.visionPriority) || 'official',
         outputDir: summary && typeof summary.outputDir === 'string' ? summary.outputDir : '',
         pasteToPath: !summary || summary.pasteToPath !== false,
+        structuredOutput: typeof eng.structuredOutput === 'boolean' ? (eng.structuredOutput ? 'true' : 'false') : '',
+        timeoutMs: typeof eng.timeoutMs === 'number' ? String(eng.timeoutMs) : '',
+        extraBody: typeof eng.extraBody === 'string' ? eng.extraBody : '',
+        proxyMode: eng.proxyMode || 'inherit',
+        proxy: typeof eng.proxy === 'string' ? eng.proxy : '',
+        requestTemplate: typeof eng.requestTemplate === 'string' ? eng.requestTemplate : '',
         modelCustom: '',
       }
     }
@@ -689,6 +1021,15 @@ window.__ModuleLoader__.load({
       } else if (dm !== bm) {
         return true
       }
+      if ((draft.sizeCap || '') !== (baseline.sizeCap || '')) return true
+      var so = typeof draft.structuredOutput === 'string' ? draft.structuredOutput : ''
+      var bso = typeof baseline.structuredOutput === 'string' ? baseline.structuredOutput : ''
+      if (so !== bso) return true
+      if ((draft.timeoutMs || '') !== (baseline.timeoutMs || '')) return true
+      if ((draft.extraBody || '') !== (baseline.extraBody || '')) return true
+      if ((draft.proxyMode || 'inherit') !== (baseline.proxyMode || 'inherit')) return true
+      if ((draft.proxy || '') !== (baseline.proxy || '')) return true
+      if ((draft.requestTemplate || '').trim() !== (baseline.requestTemplate || '').trim()) return true
       return false
     }
 
@@ -736,6 +1077,16 @@ window.__ModuleLoader__.load({
           current: current,
           dirty: dirty,
           note: note,
+          enginesMeta: (config && config.engines) || {},
+          customs: (config && config.customs) || [],
+          onCustomChanged: function () {
+            fetch('/visionforge/config')
+              .then(function (r) { return r.json() })
+              .then(function (next) {
+                if (next && typeof next === 'object') { configState[1](next); draftState[1](seedDraft(next)) }
+              })
+              .catch(function () {})
+          },
           onValues: function (next) { draftState[1](next) },
           onSave: function (finalValues) {
             var payload = nextDraft(finalValues, current)

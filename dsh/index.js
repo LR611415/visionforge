@@ -4,6 +4,7 @@
 // 保留自 liustack/modlens（MIT），桥接层为本项目独立实现。
 
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { createReadStream } from 'node:fs'
 import {
@@ -21,10 +22,21 @@ import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnHidden } from './spawnHidden.js'
+import { spawnSync } from 'node:child_process'
+import {
+  canonicalizeName,
+  checkNameConflicts,
+  parseSizeCap,
+  readCustomProviders,
+  suggestFamilyFromBaseUrl,
+} from '../src/custom-providers.js'
+import { inferGenImagePaths, inferGenRequestTemplate, inferReadContentPath, inferReadRequestTemplate } from '../src/request-template.js'
 
 const CLI_PATH = fileURLToPath(new URL('../src/index.js', import.meta.url))
 const CLI_TIMEOUT_MS = 180_000
 const CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000
+// C2：当前 DSH 会话生成/粘贴的文件（一键清理时保留，避免破坏对话内图片的放大/下载）
+const sessionTracked = new Set()
 const PASTE_MAX_BYTES = 25 * 1024 * 1024
 const EVIDENCE_CACHE_LIMIT = 256
 const EVIDENCE_RETRY_MS = 60_000
@@ -54,6 +66,26 @@ const ENGINE_META = {
   'antigravity-cli': { label: 'Antigravity（免密钥）', baseUrl: '', models: [] },
   'claude-cli': { label: 'Claude Code（免密钥）', baseUrl: '', models: [] },
   'kimi-cli': { label: 'Kimi Code（免密钥）', baseUrl: '', models: [] },
+}
+// 内置引擎能力表（读图 / 生图 / 编辑）。qwen 含 qwen-image 系列可生图+编辑、qwen-vl 可读图；
+// 其余内置引擎按官方 API 能力只标读图（生图/编辑需自定义引擎按协议族配置）。
+const BUILTIN_CAPS = {
+  qwen: { read: true, generate: true, edit: true },
+  openai: { read: true, generate: false, edit: false },
+  anthropic: { read: true, generate: false, edit: false },
+  'gemini-api': { read: true, generate: false, edit: false },
+  'antigravity-cli': { read: true, generate: false, edit: false },
+  'claude-cli': { read: true, generate: false, edit: false },
+  'kimi-cli': { read: true, generate: false, edit: false },
+}
+// 免密钥引擎对应的本机 CLI 命令（需已安装并登录，否则不可用）。
+const CLI_CMDS = { 'antigravity-cli': 'agy', 'claude-cli': 'claude', 'kimi-cli': 'kimi' }
+function cliOnPath(cmd) {
+  try {
+    const probe = process.platform === 'win32' ? 'where.exe' : 'which'
+    const r = spawnSync(probe, [cmd], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+    return r.status === 0
+  } catch { return false }
 }
 const ENGINE_ENV = {
   'gemini-api': { apiKey: 'GEMINI_API_KEY', baseUrl: 'GEMINI_BASE_URL' },
@@ -173,7 +205,9 @@ function canonicalEngine(id) {
   if (typeof id !== 'string') return ''
   const key = id.trim().toLowerCase()
   if (ENGINES.includes(key)) return key
-  return ENGINE_ALIASES[key] ?? ''
+  if (ENGINE_ALIASES[key]) return ENGINE_ALIASES[key]
+  // 自定义引擎（含中文名）：保留规范化名称，保证设置卡片读回时能还原用户选择
+  return key
 }
 
 function engineKeys(engine) {
@@ -206,12 +240,51 @@ export function engineSummary() {
     const settings = inFile
       ? Object.assign({}, ...engineKeys(id).map((key) => config.providers?.[key] ?? {}))
       : envSettings(id)
+    const meta = ENGINE_META[id] ?? {}
     engines[id] = {
+      label: typeof meta.label === 'string' ? meta.label : id,
       baseUrl: typeof settings.baseUrl === 'string' ? settings.baseUrl : '',
       model: typeof settings.model === 'string' ? settings.model : '',
       hasKey: hasKey(settings.apiKey),
+      models: Array.isArray(meta.models) ? meta.models : [],
+      keyless: KEYLESS_ENGINES.includes(id),
       proxyMode: !Object.hasOwn(settings, 'proxy') ? 'inherit' : typeof settings.proxy === 'string' && settings.proxy.trim() === '' ? 'direct' : 'custom',
+      proxy: typeof settings.proxy === 'string' ? settings.proxy : '',
+      structuredOutput: typeof settings.structuredOutput === 'boolean' ? settings.structuredOutput : '',
+      timeoutMs: typeof settings.timeoutMs === 'number' ? settings.timeoutMs : '',
+      extraBody: typeof settings.extraBody === 'object' && settings.extraBody ? JSON.stringify(settings.extraBody) : '',
+      requestTemplate: typeof settings.requestTemplate === 'object' && settings.requestTemplate ? JSON.stringify(settings.requestTemplate) : '',
       source: inFile ? 'file' : Object.keys(settings).length > 0 ? 'env' : '',
+      caps: BUILTIN_CAPS[id] ?? { read: true, generate: false, edit: false },
+      maxRes: id === 'qwen' ? '2K' : '',
+    }
+    if (KEYLESS_ENGINES.includes(id)) {
+      engines[id].cliCmd = CLI_CMDS[id] ?? id
+      engines[id].cliReady = cliOnPath(CLI_CMDS[id] ?? id)
+    }
+  }
+  const customs = readCustomProviders(config)
+  for (const [id, entry] of Object.entries(customs)) {
+    engines[id] = {
+      label: entry.displayName + '（自定义）',
+      baseUrl: typeof entry.baseUrl === 'string' ? entry.baseUrl : '',
+      model: typeof entry.model === 'string' ? entry.model : '',
+      hasKey: hasKey(entry.apiKey),
+      models: Array.isArray(entry.models) ? entry.models.map((m) => (typeof m === 'string' ? m : (m?.name ?? ''))).filter(Boolean) : [],
+      genCapable: entry.genFamily !== '' && Array.isArray(entry.models) && entry.models.some((m) => m && m.capabilities && m.capabilities.generate),
+      sizeCap: typeof entry.sizeCap === 'string' ? entry.sizeCap : '',
+      caps: { read: entry.readFamily !== '', generate: entry.genFamily !== '' && Array.isArray(entry.models) && entry.models.some((m) => m && m.capabilities && m.capabilities.generate), edit: false },
+      maxRes: typeof entry.sizeCap === 'string' && entry.sizeCap ? entry.sizeCap : (entry.genFamily !== '' ? '2K' : ''),
+      failedReason: typeof entry.failed?.reason === 'string' ? entry.failed.reason : '',
+      keyless: false,
+      custom: true,
+      proxyMode: !Object.hasOwn(entry, 'proxy') ? 'inherit' : typeof entry.proxy === 'string' && entry.proxy.trim() === '' ? 'direct' : 'custom',
+      proxy: typeof entry.proxy === 'string' ? entry.proxy : '',
+      structuredOutput: typeof entry.structuredOutput === 'boolean' ? entry.structuredOutput : '',
+      timeoutMs: typeof entry.timeoutMs === 'number' ? entry.timeoutMs : '',
+      extraBody: typeof entry.extraBody === 'object' && entry.extraBody ? JSON.stringify(entry.extraBody) : '',
+      requestTemplate: typeof entry.requestTemplate === 'object' && entry.requestTemplate ? JSON.stringify(entry.requestTemplate) : '',
+      source: 'file',
     }
   }
   const reuse = {}
@@ -219,16 +292,37 @@ export function engineSummary() {
     const granted = config.reuse?.[harness]
     reuse[harness] = typeof granted === 'boolean' ? granted : harness === 'claude'
   }
+  const customsOut = Object.entries(customs).map(([id, entry]) => ({
+    id,
+    displayName: entry.displayName ?? id,
+    readFamily: entry.readFamily ?? '',
+    genFamily: entry.genFamily ?? '',
+    sizeCap: typeof entry.sizeCap === 'string' ? entry.sizeCap : '',
+    failedReason: typeof entry.failed?.reason === 'string' ? entry.failed.reason : '',
+    baseUrl: typeof entry.baseUrl === 'string' ? entry.baseUrl : '',
+    model: typeof entry.model === 'string' ? entry.model : '',
+    hasKey: hasKey(entry.apiKey),
+    requestTemplate: typeof entry.requestTemplate === 'object' && entry.requestTemplate ? JSON.stringify(entry.requestTemplate) : '',
+  }))
   return {
     provider: canonicalEngine(config.provider),
     engines,
+    customs: customsOut,
     keyless: KEYLESS_ENGINES,
     reuse,
     visionPriority: config.visionPriority === 'plugin' ? 'plugin' : 'official',
     outputDir: typeof config.outputDir === 'string' && config.outputDir.trim() !== '' ? config.outputDir : defaultOutputDir(),
     pasteToPath: config.pasteToPath !== false,
     debugLogs: config.debugLogs === true,
+    enhanceEditPrompt: config.enhanceEditPrompt !== false,
   }
+}
+
+function inferGenFamily(readFamily) {
+  // 读图协议族 → 默认生图协议族（可被 patch.genFamily 显式覆盖）
+  if (readFamily === 'openai-compatible') return 'openai-image' // OpenAI 兼容网关最常见：POST /images/generations
+  if (readFamily === 'gemini') return 'google-imagen'
+  return ''
 }
 
 export function applySettings(patch) {
@@ -239,7 +333,14 @@ export function applySettings(patch) {
     } else if (ENGINES.includes(patch.provider)) {
       config.provider = patch.provider
     } else {
-      throw new Error(`unknown engine: ${patch.provider}`)
+      // 自定义引擎也可以作为默认提供方（读图/生图默认引擎）
+      let cid = ''
+      try { cid = canonicalizeName(patch.provider) } catch { cid = '' }
+      if (cid !== '' && Object.hasOwn(config.customProviders ?? {}, cid)) {
+        config.provider = cid
+      } else {
+        throw new Error(`unknown engine: ${patch.provider}`)
+      }
     }
   }
   if (patch?.visionPriority !== undefined) {
@@ -251,44 +352,190 @@ export function applySettings(patch) {
   }
   let engine = patch?.engine
   if (engine === undefined && (Object.hasOwn(patch, 'baseUrl') || Object.hasOwn(patch, 'model') || Object.hasOwn(patch, 'apiKey') || Object.hasOwn(patch, 'proxyMode'))) {
-    engine = canonicalEngine(config.provider) || 'qwen'
+    const prov = typeof config.provider === 'string' ? config.provider.trim() : ''
+    const canon = canonicalEngine(prov)
+    engine = canon || (prov !== '' && Object.hasOwn(config.customProviders ?? {}, prov.toLowerCase()) ? prov.toLowerCase() : '') || 'qwen'
   }
   if (engine !== undefined) {
-    if (!ENGINES.includes(engine)) throw new Error(`unknown engine: ${engine}`)
-    config.providers = { ...config.providers }
-    const holders = engineKeys(engine).filter((key) => config.providers[key] !== undefined)
-    const target = holders.length > 0 ? holders[holders.length - 1] : engine
-    const seed = holders.length > 0 ? {} : envSettings(engine)
-    const settings = { ...seed, ...config.providers[target] }
-    for (const field of ['baseUrl', 'model']) {
-      if (!Object.hasOwn(patch, field)) continue
-      const value = typeof patch[field] === 'string' ? patch[field].trim() : ''
-      if (value === '') delete settings[field]
-      else settings[field] = value
-    }
-    const apiKey = typeof patch.apiKey === 'string' ? patch.apiKey.trim() : ''
-    if (apiKey !== '') settings.apiKey = apiKey
-    if (Object.hasOwn(patch, 'proxyMode')) {
-      if (patch.proxyMode === 'inherit') {
-        for (const holder of holders) {
-          const stored = config.providers[holder]
-          if (stored && typeof stored === 'object' && !Array.isArray(stored)) delete stored.proxy
+    const rawEngine = typeof engine === 'string' ? engine.trim() : ''
+    if (!rawEngine) throw new Error('engine 不能为空')
+    const customId = canonicalizeName(rawEngine)
+    const isCustom = customId !== '' && !ENGINES.includes(customId)
+    if (!isCustom && !ENGINES.includes(rawEngine)) throw new Error(`unknown engine: ${rawEngine}`)
+    if (isCustom) {
+      // 自定义引擎：更新已有条目，或由主卡片"只填名称"后首次保存时创建。
+      config.customProviders = { ...(config.customProviders ?? {}) }
+      const existing = config.customProviders[customId]
+      if (existing) {
+        // 修改配置即解除验证/失败状态：下次调用重新验证
+        delete existing.verified
+        delete existing.failed
+        if (Object.hasOwn(patch, 'baseUrl')) {
+          const v = typeof patch.baseUrl === 'string' ? patch.baseUrl.trim() : ''
+          if (v === '') throw new Error(`自定义引擎「${customId}」的接口地址不能为空`)
+          existing.baseUrl = v
+        } else if (typeof existing.baseUrl !== 'string' || existing.baseUrl.trim() === '') {
+          throw new Error(`自定义引擎「${customId}」的接口地址不能为空`)
         }
-        delete settings.proxy
-      } else if (patch.proxyMode === 'direct') {
-        settings.proxy = ''
-      } else if (patch.proxyMode === 'custom') {
-        const proxy = typeof patch.proxy === 'string' ? patch.proxy.trim() : ''
-        if (proxy !== '') settings.proxy = proxy
-        else {
-          const merged = Object.assign({}, ...holders.map((key) => config.providers[key]))
-          if (typeof merged.proxy !== 'string' || merged.proxy.trim() === '') throw new Error('custom proxy mode needs a proxy URL')
+        const model = typeof patch.model === 'string' ? patch.model.trim() : ''
+        if (model !== '') {
+          const models = Array.isArray(existing.models) ? existing.models.map((m) => ({ ...m })) : []
+          const idx = models.findIndex((m) => m && m.capabilities && m.capabilities.read)
+          if (idx >= 0) models[idx] = { ...models[idx], name: model }
+          else models.push({ name: model, capabilities: { read: true, generate: false, edit: false } })
+          existing.models = models
+          existing.model = model
+        }
+        const apiKey = typeof patch.apiKey === 'string' ? patch.apiKey.trim() : ''
+        if (apiKey !== '') existing.apiKey = apiKey
+        if (Object.hasOwn(patch, 'genFamily')) {
+          const gf = typeof patch.genFamily === 'string' ? patch.genFamily.trim() : ''
+          if (gf === '') {
+            delete existing.genFamily
+          } else {
+            if (!GEN_FAMILIES.includes(gf)) throw new Error(`未知的生图协议族：${gf}。可选：${GEN_FAMILIES.filter((f) => f !== '').join(', ')}。`)
+            existing.genFamily = gf
+          }
+          const models = Array.isArray(existing.models) ? existing.models.map((m) => ({ ...m })) : []
+          const idx = models.findIndex((m) => m && m.capabilities && (m.capabilities.generate || m.capabilities.read))
+          if (idx >= 0) models[idx] = { ...models[idx], capabilities: { ...models[idx].capabilities, generate: gf !== '' } }
+          else if (gf !== '' && existing.model) models.push({ name: existing.model, capabilities: { read: true, generate: true, edit: false } })
+          existing.models = models
+        }
+        if (Object.hasOwn(patch, 'sizeCap')) {
+          const sc = typeof patch.sizeCap === 'string' ? patch.sizeCap.trim() : ''
+          if (sc === '') {
+            delete existing.sizeCap
+          } else {
+            try { parseSizeCap(sc) } catch (e) { throw new Error(e.message) }
+            existing.sizeCap = sc
+          }
         }
       } else {
-        throw new Error(`unknown proxy mode: ${patch.proxyMode}`)
+        const baseUrl = typeof patch.baseUrl === 'string' ? patch.baseUrl.trim() : ''
+        if (!baseUrl) throw new Error(`自定义引擎「${customId}」的接口地址不能为空`)
+        if (!/^https?:\/\//i.test(baseUrl)) throw new Error(`自定义引擎「${customId}」的接口地址必须以 http:// 或 https:// 开头`)
+        const conflict = checkNameConflicts(customId, config)
+        if (conflict) throw new Error(conflict.message)
+        const model = typeof patch.model === 'string' ? patch.model.trim() : ''
+        const apiKey = typeof patch.apiKey === 'string' ? patch.apiKey.trim() : ''
+        const readFamily = suggestFamilyFromBaseUrl(baseUrl).family || 'openai-compatible'
+        const genFamily = typeof patch.genFamily === 'string' && patch.genFamily.trim() !== '' ? patch.genFamily.trim() : inferGenFamily(readFamily)
+        if (genFamily !== '' && !GEN_FAMILIES.includes(genFamily)) {
+          throw new Error(`未知的生图协议族：${genFamily}。可选：${GEN_FAMILIES.filter((f) => f !== '').join(', ')}。`)
+        }
+        const sizeCap = typeof patch.sizeCap === 'string' ? patch.sizeCap.trim() : ''
+        if (sizeCap !== '') {
+          try { parseSizeCap(sizeCap) } catch (e) { throw new Error(e.message) }
+        }
+        config.customProviders[customId] = {
+          displayName: customId,
+          baseUrl,
+          readFamily,
+          ...(genFamily !== '' ? { genFamily } : {}),
+          ...(sizeCap !== '' ? { sizeCap } : {}),
+          ...(model !== '' ? { model, models: [{ name: model, capabilities: { read: true, generate: genFamily !== '', edit: false } }] } : {}),
+          ...(apiKey !== '' ? { apiKey } : {}),
+        }
+        config.provider = customId
+      }
+    } else {
+      config.providers = { ...config.providers }
+      const holders = engineKeys(rawEngine).filter((key) => config.providers[key] !== undefined)
+      const target = holders.length > 0 ? holders[holders.length - 1] : rawEngine
+      const seed = holders.length > 0 ? {} : envSettings(rawEngine)
+      const settings = { ...seed, ...config.providers[target] }
+      for (const field of ['baseUrl', 'model']) {
+        if (!Object.hasOwn(patch, field)) continue
+        const value = typeof patch[field] === 'string' ? patch[field].trim() : ''
+        if (value === '') delete settings[field]
+        else settings[field] = value
+      }
+      const apiKey = typeof patch.apiKey === 'string' ? patch.apiKey.trim() : ''
+      if (apiKey !== '') settings.apiKey = apiKey
+      if (Object.hasOwn(patch, 'proxyMode')) {
+        if (patch.proxyMode === 'inherit') {
+          for (const holder of holders) {
+            const stored = config.providers[holder]
+            if (stored && typeof stored === 'object' && !Array.isArray(stored)) delete stored.proxy
+          }
+          delete settings.proxy
+        } else if (patch.proxyMode === 'direct') {
+          settings.proxy = ''
+        } else if (patch.proxyMode === 'custom') {
+          const proxy = typeof patch.proxy === 'string' ? patch.proxy.trim() : ''
+          if (proxy !== '') settings.proxy = proxy
+          else {
+            const merged = Object.assign({}, ...holders.map((key) => config.providers[key]))
+            if (typeof merged.proxy !== 'string' || merged.proxy.trim() === '') throw new Error('custom proxy mode needs a proxy URL')
+          }
+        } else {
+          throw new Error(`unknown proxy mode: ${patch.proxyMode}`)
+        }
+      }
+      config.providers[target] = settings
+    }
+  }
+  // ---- 开发者选项：响应格式 / 请求超时 / 请求体扩展（写入当前引擎）----
+  const hasDev = Object.hasOwn(patch, 'structuredOutput') || Object.hasOwn(patch, 'timeoutMs') || Object.hasOwn(patch, 'extraBody') || Object.hasOwn(patch, 'requestTemplate')
+  if (hasDev) {
+    const rawEngineDev = typeof engine === 'string' && engine.trim() !== '' ? engine.trim() : (typeof config.provider === 'string' ? config.provider.trim() : '')
+    if (!rawEngineDev) throw new Error('未指定引擎，无法保存开发者选项')
+    const customIdDev = canonicalizeName(rawEngineDev)
+    const isCustomDev = customIdDev !== '' && !ENGINES.includes(customIdDev) && Object.hasOwn(config.customProviders ?? {}, customIdDev)
+    const holder = isCustomDev ? config.customProviders[customIdDev] : config.providers[rawEngineDev]
+    if (!holder) throw new Error(`unknown engine: ${rawEngineDev}`)
+    if (Object.hasOwn(patch, 'structuredOutput')) {
+      if (typeof patch.structuredOutput === 'boolean') holder.structuredOutput = patch.structuredOutput
+      else delete holder.structuredOutput
+    }
+    if (Object.hasOwn(patch, 'timeoutMs')) {
+      const v = patch.timeoutMs
+      if (v === '' || v === null || v === undefined) delete holder.timeoutMs
+      else {
+        const n = Number(v)
+        if (!Number.isFinite(n) || n < 1000 || n > 600000) throw new Error('请求超时必须在 1000–600000 毫秒之间')
+        holder.timeoutMs = Math.round(n)
       }
     }
-    config.providers[target] = settings
+    if (Object.hasOwn(patch, 'extraBody')) {
+      const raw = typeof patch.extraBody === 'string' ? patch.extraBody.trim() : ''
+      if (raw === '') delete holder.extraBody
+      else {
+        let obj
+        try { obj = JSON.parse(raw) } catch { throw new Error('请求体扩展（extraBody）必须是合法 JSON 对象') }
+        if (!obj || typeof obj !== 'object' || Array.isArray(obj)) throw new Error('请求体扩展（extraBody）必须是 JSON 对象')
+        holder.extraBody = { ...(holder.extraBody ?? {}), ...obj }
+      }
+    }
+    if (Object.hasOwn(patch, 'requestTemplate')) {
+      const raw = patch.requestTemplate
+      if (raw === null || raw === undefined || raw === '' || (typeof raw === 'object' && Object.keys(raw).length === 0)) {
+        delete holder.requestTemplate
+      } else {
+        let obj = raw
+        if (typeof raw === 'string') {
+          const trimmed = raw.trim()
+          if (trimmed === '') delete holder.requestTemplate
+          else {
+            try { obj = JSON.parse(trimmed) } catch { throw new Error('自定义请求模板必须是合法 JSON') }
+          }
+        }
+        if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+          if (obj.enabled !== undefined && typeof obj.enabled !== 'boolean') throw new Error('requestTemplate.enabled 必须是布尔值')
+          for (const side of ['read', 'generate']) {
+            if (obj[side] !== undefined) {
+              if (!obj[side] || typeof obj[side] !== 'object' || typeof obj[side].url !== 'string' || obj[side].url.trim() === '') {
+                throw new Error(`请求模板 ${side}.url 不能为空（应含 {{BASE_URL}} 或完整地址）`)
+              }
+            }
+          }
+          holder.requestTemplate = obj
+        } else if (raw !== '') {
+          throw new Error('自定义请求模板必须是 JSON 对象')
+        }
+      }
+    }
   }
   if (patch?.reuse !== null && typeof patch?.reuse === 'object') {
     config.reuse = { ...config.reuse }
@@ -303,6 +550,9 @@ export function applySettings(patch) {
   }
   if (patch?.pasteToPath !== undefined && typeof patch.pasteToPath === 'boolean') {
     config.pasteToPath = patch.pasteToPath
+  }
+  if (patch?.enhanceEditPrompt !== undefined && typeof patch.enhanceEditPrompt === 'boolean') {
+    config.enhanceEditPrompt = patch.enhanceEditPrompt
   }
   if (patch?.debugLogs !== undefined && typeof patch.debugLogs === 'boolean') {
     config.debugLogs = patch.debugLogs
@@ -398,6 +648,11 @@ function buildPreviewMarkdown(value) {
     const dl = port > 0 && typeof fp === 'string' ? ` [保存图片 ${i + 1}](http://127.0.0.1:${port}/visionforge/save-local?path=${encodeURIComponent(fp)})` : ''
     lines.push(`![生成图 ${i + 1}](${thumb})${dl}`)
   })
+  if (typeof v.provider === 'string') lines.push(`Provider: ${v.provider}`)
+  if (typeof v.model === 'string' && v.model !== '') lines.push(`Model: ${v.model}`)
+  if (typeof v.size === 'string' && v.size !== '') lines.push(`分辨率: ${String(v.size).replace(/\*/g, '×')}`)
+  if (typeof v.sizeNote === 'string' && v.sizeNote !== '') lines.push(`说明: ${v.sizeNote}`)
+  if (typeof v.enhanceNotice === 'string' && v.enhanceNotice !== '') lines.push(`注意: ${v.enhanceNotice}`)
   return lines.join('\n')
 }
 
@@ -428,6 +683,9 @@ function renderGenText(value) {
   }
   if (typeof v.provider === 'string') lines.push(`Provider: ${v.provider}`)
   if (typeof v.model === 'string') lines.push(`Model: ${v.model}`)
+  if (typeof v.size === 'string' && v.size !== '') lines.push(`分辨率: ${String(v.size).replace(/\*/g, '×')}`)
+  if (typeof v.sizeNote === 'string' && v.sizeNote !== '') lines.push(`说明: ${v.sizeNote}`)
+  if (typeof v.enhanceNotice === 'string' && v.enhanceNotice !== '') lines.push(`注意: ${v.enhanceNotice}`)
   return lines.join('\n') || JSON.stringify(value)
 }
 
@@ -631,6 +889,127 @@ function startRenderServer() {
 let settingsPort = 0
 let settingsServer = null
 
+const READ_FAMILIES = ['openai-compatible', 'anthropic', 'gemini', 'raw-base64']
+const GEN_FAMILIES = ['', 'dashscope-image', 'openai-image', 'chat-native', 'google-imagen']
+
+function persistConfigLocal(config) {
+  mkdirSync(dirname(configPath()), { recursive: true })
+  writeFileSync(configPath(), `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 })
+}
+
+/** 设置卡片提交的自定义引擎操作：add / save / remove。服务端护栏与 CLI 完全一致。 */
+function applyCustomSettings(patch) {
+  if (!patch || typeof patch !== 'object') throw new Error('custom patch must be an object')
+  const config = readConfig()
+  if (patch.action === 'remove') {
+    const id = canonicalizeName(patch.name)
+    if (!Object.hasOwn(config.customProviders ?? {}, id)) throw new Error(`自定义引擎「${id}」不存在`)
+    delete config.customProviders[id]
+    if (config.provider === id) config.provider = ''
+    persistConfigLocal(config)
+    return { removed: id }
+  }
+  if (patch.action !== 'add' && patch.action !== 'save') throw new Error('custom action must be add / save / remove')
+  const id = canonicalizeName(patch.name)
+  const existing = Object.hasOwn(config.customProviders ?? {}, id)
+  const conflict = checkNameConflicts(id, config)
+  if (conflict && (!existing || patch.action === 'add')) {
+    throw new Error(conflict.message)
+  }
+  const baseUrl = typeof patch.baseUrl === 'string' ? patch.baseUrl.trim() : ''
+  if (!baseUrl) throw new Error('接口地址不能为空')
+  if (!/^https?:\/\//i.test(baseUrl)) throw new Error('接口地址必须以 http:// 或 https:// 开头')
+  const readFamily = typeof patch.readFamily === 'string' && READ_FAMILIES.includes(patch.readFamily)
+    ? patch.readFamily
+    : suggestFamilyFromBaseUrl(baseUrl).family || 'openai-compatible'
+  if (patch.genFamily !== undefined && patch.genFamily !== '' && !GEN_FAMILIES.includes(patch.genFamily)) {
+    throw new Error(`未知的生图协议族：${patch.genFamily}`)
+  }
+  const entry = config.customProviders?.[id] ?? {}
+  const models = Array.isArray(entry.models) ? entry.models.map((m) => ({ ...m, capabilities: { ...m.capabilities } })) : []
+  const setReadModel = (name) => {
+    const idx = models.findIndex((m) => m.capabilities.read)
+    if (idx >= 0) { models[idx] = { ...models[idx], name, capabilities: { ...models[idx].capabilities, read: true } } }
+    else models.push({ name, capabilities: { read: true, generate: false, edit: false } })
+  }
+  const setGenModel = (name) => {
+    const idx = models.findIndex((m) => m.capabilities.generate || m.capabilities.edit)
+    if (idx >= 0) { models[idx] = { ...models[idx], name, capabilities: { ...models[idx].capabilities, generate: true } } }
+    else models.push({ name, capabilities: { read: false, generate: true, edit: false } })
+  }
+  if (typeof patch.model === 'string' && patch.model.trim() !== '') setReadModel(patch.model.trim())
+  if (typeof patch.genModel === 'string' && patch.genModel.trim() !== '') setGenModel(patch.genModel.trim())
+  const displayName = typeof patch.displayName === 'string' && patch.displayName.trim() !== '' ? patch.displayName.trim() : (entry.displayName || id)
+  const apiKey = typeof patch.apiKey === 'string' && patch.apiKey.trim() !== '' ? patch.apiKey.trim() : entry.apiKey
+  const sizeCap = typeof patch.sizeCap === 'string' && patch.sizeCap.trim() !== '' ? patch.sizeCap.trim() : (typeof entry.sizeCap === 'string' ? entry.sizeCap : '')
+  if (sizeCap !== '') { try { parseSizeCap(sizeCap) } catch (e) { throw new Error(e.message) } }
+  // 修改配置即解除验证/失败状态
+  const { verified: _v, failed: _f, ...restEntry } = entry
+  config.customProviders ??= {}
+  config.customProviders[id] = {
+    ...restEntry,
+    displayName,
+    baseUrl,
+    readFamily,
+    ...(patch.genFamily ? { genFamily: patch.genFamily } : entry.genFamily ? { genFamily: entry.genFamily } : {}),
+    ...(sizeCap ? { sizeCap } : {}),
+    ...(apiKey !== undefined ? { apiKey } : {}),
+    ...(models.length > 0 ? { models } : {}),
+    ...(models.find((m) => m.capabilities.read) ? { model: models.find((m) => m.capabilities.read).name } : {}),
+  }
+  persistConfigLocal(config)
+  return { saved: id, readFamily, conflict: conflict && existing ? { folded: conflict.folded, distance: conflict.distance } : undefined }
+}
+
+/** 内置 + 自定义引擎的完整列表（设置页渲染用）。 */
+function allEngineMeta(config) {
+  const engines = {}
+  const settings = {}
+  const providers = config.providers ?? {}
+  for (const id of ENGINES) {
+    const meta = ENGINE_META[id] ?? { label: id, baseUrl: '', models: [] }
+    const stored = providers[id] ?? {}
+    engines[id] = {
+      label: meta.label,
+      keyless: KEYLESS_ENGINES.includes(id),
+      baseUrl: typeof meta.baseUrl === 'string' ? meta.baseUrl : '',
+      models: Array.isArray(meta.models) ? meta.models : [],
+    }
+    settings[id] = {
+      baseUrl: typeof stored.baseUrl === 'string' ? stored.baseUrl : '',
+      model: typeof stored.model === 'string' ? stored.model : '',
+      hasKey: hasKey(stored.apiKey),
+      structuredOutput: typeof stored.structuredOutput === 'boolean' ? stored.structuredOutput : '',
+      timeoutMs: typeof stored.timeoutMs === 'number' ? stored.timeoutMs : '',
+      extraBody: typeof stored.extraBody === 'object' && stored.extraBody ? JSON.stringify(stored.extraBody) : '',
+      requestTemplate: typeof stored.requestTemplate === 'object' && stored.requestTemplate ? JSON.stringify(stored.requestTemplate) : '',
+      proxyMode: !Object.hasOwn(stored, 'proxy') ? 'inherit' : typeof stored.proxy === 'string' && stored.proxy.trim() === '' ? 'direct' : 'custom',
+      proxy: typeof stored.proxy === 'string' ? stored.proxy : '',
+    }
+  }
+  const customs = readCustomProviders(config)
+  for (const entry of Object.values(customs)) {
+    engines[entry.id] = {
+      label: entry.displayName + '（自定义）',
+      keyless: false,
+      baseUrl: entry.baseUrl ?? '',
+      models: (entry.models ?? []).map((m) => m.name),
+    }
+    settings[entry.id] = {
+      baseUrl: entry.baseUrl ?? '',
+      model: entry.model ?? '',
+      hasKey: hasKey(entry.apiKey),
+      structuredOutput: typeof entry.structuredOutput === 'boolean' ? entry.structuredOutput : '',
+      timeoutMs: typeof entry.timeoutMs === 'number' ? entry.timeoutMs : '',
+      extraBody: typeof entry.extraBody === 'object' && entry.extraBody ? JSON.stringify(entry.extraBody) : '',
+      requestTemplate: typeof entry.requestTemplate === 'object' && entry.requestTemplate ? JSON.stringify(entry.requestTemplate) : '',
+      proxyMode: !Object.hasOwn(entry, 'proxy') ? 'inherit' : typeof entry.proxy === 'string' && entry.proxy.trim() === '' ? 'direct' : 'custom',
+      proxy: typeof entry.proxy === 'string' ? entry.proxy : '',
+    }
+  }
+  return { engines, settings, customs }
+}
+
 function settingsPageHtml() {
   return `<!doctype html>
 <html lang="zh-CN">
@@ -659,6 +1038,7 @@ function settingsPageHtml() {
 <div class="card">
   <label>引擎（提供方）</label>
   <select id="engine"></select>
+  <div id="engineCaps" class="hint"></div>
   <label>API 密钥</label>
   <input id="apiKey" placeholder="多个用英文逗号分隔，失败自动轮换" autocomplete="off">
   <div class="mask" id="hasKey"></div>
@@ -674,20 +1054,93 @@ function settingsPageHtml() {
     <option value="plugin">插件优先</option>
   </select>
   <div class="hint">官方优先：官方视觉模型能看图时先解析，不能时自动走插件；插件优先：始终先用你配置的提供商密钥，全部失败才试官方</div>
-  <label>图片输出目录</label>
-  <input id="outputDir">
-  <label>粘贴转路径（智能接管）</label>
-  <select id="pasteToPath">
-    <option value="true">开启</option>
-    <option value="false">关闭</option>
-  </select>
-  <label>调试日志（排障用）</label>
-  <select id="debugLogs">
-    <option value="true">开启</option>
-    <option value="false">关闭（默认）</option>
-  </select>
+  <details id="advanced" style="margin-top:10px;border-top:1px solid rgba(128,128,128,.25);padding-top:6px">
+    <summary style="cursor:pointer;font-size:13px;color:#7ab;user-select:none;padding:4px 0">开发者选项（响应格式 / 超时 / 代理 / 请求体扩展 / 输出目录 / 粘贴 / 日志 / 增强）</summary>
+    <div style="padding-top:6px">
+      <label>响应格式（structuredOutput）</label>
+      <select id="structuredOutput">
+        <option value="">跟随引擎（默认）</option>
+        <option value="true">强制结构化输出（读图时要求网关按视觉 JSON schema 返回）</option>
+        <option value="false">关闭</option>
+      </select>
+      <div class="hint">默认关闭；仅 OpenAI 兼容网关支持时开启，不支持的网关会返回 400</div>
+      <label>请求超时（毫秒）</label>
+      <input id="timeoutMs" placeholder="留空 = 引擎默认（读图约 60s，生图约 120s）">
+      <label>代理模式</label>
+      <select id="proxyMode">
+        <option value="inherit">继承全局（默认）</option>
+        <option value="direct">强制直连</option>
+        <option value="custom">自定义代理</option>
+      </select>
+      <input id="proxy" placeholder="http://127.0.0.1:7890（代理模式选「自定义代理」时填写）">
+      <label>请求体扩展（extraBody JSON）</label>
+      <textarea id="extraBody" rows="2" placeholder='{"thinking":{"type":"disabled"}}（厂商特殊开关；留空 = 无）'></textarea>
+      <label>图片输出目录</label>
+      <input id="outputDir" placeholder="留空 = 默认（D:\VisionForge\out）">
+      <label>粘贴转路径（智能接管）</label>
+      <select id="pasteToPath">
+        <option value="true">开启</option>
+        <option value="false">关闭</option>
+      </select>
+      <label>调试日志（排障用）</label>
+      <select id="debugLogs">
+        <option value="true">开启</option>
+        <option value="false">关闭（默认）</option>
+      </select>
+      <label>图生图提示词自动增强</label>
+      <select id="enhanceEditPrompt">
+        <option value="true">开启（推荐）</option>
+        <option value="false">关闭</option>
+      </select>
+      <div class="hint">简短指令（如"让两人拥抱"）自动追加保护约束：保持面部特征、肢体自然、不加水印；你明确要求改某项时自动跳过对应约束</div>
+      <div style="border-top:1px dashed rgba(128,128,128,.35);margin-top:10px;padding-top:8px">
+        <label>自定义请求模板（官方 JSON 兜底）</label>
+        <div class="hint">仅当该引擎的请求格式与内置协议族（OpenAI 兼容 / Anthropic / Gemini / 原生）不兼容时使用。从引擎官网复制「请求 / 响应示例 JSON」粘贴到下方，点「自动生成模板」得到占位符模板（{{PROMPT}} / {{IMAGE1}} / {{MODEL}} / {{API_KEY}} 等），可再手改后保存；尺寸占位符：{{SIZE}}（内部原文）、{{SIZE_X}}（1024x1024，多数引擎）、{{SIZE_STAR}}（1024*1024，千问系）；{{COUNT}}/{{SIZE}} 整节点出现时自动保持数字类型。留空 = 关闭</div>
+        <label>读图请求示例（官方 JSON）</label>
+        <textarea id="rtReadSample" rows="4" placeholder='{"url":"https://api.xxx.com/chat/completions","headers":{"Authorization":"Bearer sk-..."},"body":{"model":"...","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,..."}},{"type":"text","text":"请描述这张图片"}]}]}}'></textarea>
+        <button type="button" id="rtReadInfer" style="margin-top:6px">自动生成读图模板</button>
+        <label>生图请求示例（官方 JSON）</label>
+        <textarea id="rtGenSample" rows="4" placeholder='{"url":"https://api.xxx.com/images/generations","headers":{"Authorization":"Bearer sk-..."},"body":{"model":"...","prompt":"一只猫","size":"1024x1024","n":1}}'></textarea>
+        <button type="button" id="rtGenInfer" style="margin-top:6px">自动生成生图模板</button>
+        <label>生图响应示例（官方 JSON）</label>
+        <textarea id="rtRespSample" rows="3" placeholder='{"data":[{"url":"https://cdn.xxx.com/a.png"}]}'></textarea>
+        <button type="button" id="rtRespInfer" style="margin-top:6px">自动生成响应提取路径</button>
+        <label>模板 JSON（可编辑；留空 = 关闭自定义模板）</label>
+        <textarea id="rtTemplate" rows="6" placeholder='{"enabled":true,"read":{...},"generate":{...},"extract":{...}}'></textarea>
+        <label>启用自定义模板</label>
+        <select id="rtEnabled">
+          <option value="true">开启</option>
+          <option value="false">关闭</option>
+        </select>
+      </div>
+    </div>
+  </details>
+  <details id="cacheManage" style="margin-top:10px;border-top:1px solid rgba(128,128,128,.25);padding-top:6px">
+    <summary style="cursor:pointer;font-size:13px;color:#7ab;user-select:none;padding:4px 0">缓存管理（生成图 / 粘贴 / 特征摘要）</summary>
+    <div style="padding-top:6px">
+      <div id="cacheInfo" class="hint">正在统计缓存占用…</div>
+      <button id="cacheClean" type="button" style="margin-top:6px">立即清理（保留当前会话中的图片）</button>
+      <div class="hint">一键清理会删除生成图 / 粘贴缓存与全部特征摘要；当前会话生成的图片会保留，不影响对话内放大 / 下载</div>
+    </div>
+  </details>
   <button id="save">保存</button>
   <div id="msg"></div>
+</div>
+<div class="card" id="customCard">
+  <h1 style="font-size:16px;margin-bottom:4px">自定义引擎（翻译器）</h1>
+  <div class="sub">添加任意厂商引擎（Google Gemini、Imagen、OpenAI 兼容网关等），无需改代码即可读图 / 生图 / 编辑。名称会自动规范化</div>
+  <div id="customList" class="sub"></div>
+  <button id="toggleAddCustom" type="button" style="margin-top:8px">+ 添加 / 编辑自定义引擎</button>
+  <div id="addCustom" class="hidden">
+    <label>引擎名称</label>
+    <input id="cName" placeholder="例如 google" autocomplete="off">
+    <div class="hint" id="cNameHint">自动规范为小写字母、数字、-、_、.（最长 40 字符）；与内置引擎重名会被拒绝</div>
+    <label>显示名称（可选）</label>
+    <input id="cDisplay" placeholder="例如 Google Gemini">
+    <div class="hint">添加后请在上方引擎列表中选择该引擎，在下方填写接口地址、API 密钥与模型，再点「保存」即可生效（协议族由接口地址自动识别）</div>
+    <div id="cMsg"></div>
+    <button id="saveCustom">添加引擎</button>
+  </div>
 </div>
 <script>
   var msg = document.getElementById('msg')
@@ -717,6 +1170,11 @@ function settingsPageHtml() {
   function renderEngine(id) {
     var meta = eng(id)
     document.getElementById('engine').value = id
+    var capsEl = document.getElementById('engineCaps')
+    if (meta && meta.caps) {
+      var c = meta.caps
+      capsEl.textContent = '能力：' + (c.read ? '✓ 读图' : '✗ 读图') + ' / ' + (c.generate ? '✓ 生图' : '✗ 生图') + ' / ' + (c.edit ? '✓ 编辑' : '✗ 编辑') + (meta.maxRes ? ' · 最高 ' + meta.maxRes : '') + (meta.keyless ? ' · 免密钥' : '')
+    } else { capsEl.textContent = '' }
     var isKeyless = meta.keyless
     var keyInput = document.getElementById('apiKey')
     keyInput.classList.toggle('hidden', isKeyless)
@@ -728,6 +1186,24 @@ function settingsPageHtml() {
     var stored = DATA.settings[id] || {}
     document.getElementById('baseUrl').value = (stored.baseUrl !== undefined && stored.baseUrl !== '') ? stored.baseUrl : (meta.baseUrl || '')
     rebuildModels(id, stored.model || '')
+    var soEl = document.getElementById('structuredOutput')
+    if (soEl) soEl.value = stored.structuredOutput === '' ? '' : String(stored.structuredOutput)
+    var tmEl = document.getElementById('timeoutMs')
+    if (tmEl) tmEl.value = typeof stored.timeoutMs === 'number' ? String(stored.timeoutMs) : ''
+    var ebEl = document.getElementById('extraBody')
+    if (ebEl) ebEl.value = typeof stored.extraBody === 'string' ? stored.extraBody : ''
+    var pmEl = document.getElementById('proxyMode')
+    if (pmEl) pmEl.value = stored.proxyMode || 'inherit'
+    var pxEl = document.getElementById('proxy')
+    if (pxEl) pxEl.value = typeof stored.proxy === 'string' ? stored.proxy : ''
+    var rtEl = document.getElementById('rtTemplate')
+    if (rtEl) rtEl.value = typeof stored.requestTemplate === 'string' ? stored.requestTemplate : ''
+    var rteEl = document.getElementById('rtEnabled')
+    if (rteEl) {
+      var rtObj = null
+      try { rtObj = stored.requestTemplate ? JSON.parse(stored.requestTemplate) : null } catch (e) {}
+      rteEl.value = rtObj && rtObj.enabled === false ? 'false' : 'true'
+    }
   }
   ;(async function () {
     try {
@@ -738,12 +1214,23 @@ function settingsPageHtml() {
       var keys = Object.keys(DATA.engines)
       for (var i = 0; i < keys.length; i++) {
         var op = document.createElement('option')
-        op.value = keys[i]; op.textContent = DATA.engines[keys[i]].label
+        op.value = keys[i]; op.textContent = DATA.engines[keys[i]].label + capSuffix(DATA.engines[keys[i]])
         sel.appendChild(op)
       }
       sel.onchange = function () { renderEngine(this.value) }
+      function capSuffix(meta) {
+        var c = meta.caps || {}
+        var s = []
+        if (c.read) s.push('读图')
+        if (c.generate) s.push('生图')
+        if (c.edit) s.push('编辑')
+        var base = s.join('·')
+        if (meta.maxRes) base = base ? base + '·最高' + meta.maxRes : '最高' + meta.maxRes
+        return base ? '（' + base + '）' : ''
+      }
       document.getElementById('visionPriority').value = DATA.visionPriority || 'official'
       document.getElementById('outputDir').value = DATA.outputDir || ''
+      document.getElementById('enhanceEditPrompt').value = DATA.enhanceEditPrompt === false ? 'false' : 'true'
       document.getElementById('pasteToPath').value = DATA.pasteToPath ? 'true' : 'false'
       document.getElementById('debugLogs').value = DATA.debugLogs ? 'true' : 'false'
       var lr = DATA.lastRead
@@ -754,8 +1241,37 @@ function settingsPageHtml() {
         lrEl.textContent = '最近一次读图引擎：暂无记录（完成一次读图后显示）'
       }
       renderEngine(DATA.current || 'qwen')
+      initCustom()
     } catch (e) { msg.textContent = '加载当前配置失败：' + e.message; msg.className = 'err' }
   })()
+  var fmtBytes = function (b) {
+    if (b >= 1048576) return (b / 1048576).toFixed(1) + ' MB'
+    if (b >= 1024) return (b / 1024).toFixed(1) + ' KB'
+    return b + ' B'
+  }
+  function refreshCache() {
+    fetch('/visionforge/cache/stats').then(function (r) { return r.json() }).then(function (st) {
+      var el = document.getElementById('cacheInfo')
+      if (!el) return
+      el.textContent = '输出目录：' + (st.outDir || '') + ' ｜ 生成图 ' + st.outCount + ' 个（' + fmtBytes(st.outBytes) + '）｜ 粘贴 ' + st.pasteCount + ' 个（' + fmtBytes(st.pasteBytes) + '）｜ 特征摘要 ' + st.featCount + ' 个（' + fmtBytes(st.featBytes) + '）｜ 合计 ' + fmtBytes(st.totalBytes)
+    }).catch(function () {})
+  }
+  refreshCache()
+  var cacheCleanBtn = document.getElementById('cacheClean')
+  if (cacheCleanBtn) {
+    cacheCleanBtn.onclick = function () {
+      var b = this
+      b.disabled = true
+      fetch('/visionforge/cache/clean', { method: 'POST' }).then(function (r) { return r.json() }).then(function (res) {
+        var info = document.getElementById('cacheInfo')
+        if (info) info.textContent = '已清理生成图/粘贴 ' + res.removed + ' 个（释放 ' + fmtBytes(res.freed) + '）＋特征摘要 ' + res.featRemoved + ' 个（释放 ' + fmtBytes(res.featFreed) + '）' + (res.kept ? '；保留当前会话图片 ' + res.kept + ' 张' : '')
+        refreshCache()
+      }).catch(function (e) {
+        var m = document.getElementById('msg')
+        if (m) { m.textContent = '清理失败：' + e.message; m.className = 'err' }
+      }).finally(function () { b.disabled = false })
+    }
+  }
   document.getElementById('apiKey').onfocus = function () {
     if (this.value === '••••••') this.value = ''
   }
@@ -778,8 +1294,23 @@ function settingsPageHtml() {
         model: model,
         visionPriority: document.getElementById('visionPriority').value,
         outputDir: document.getElementById('outputDir').value.trim(),
+        enhanceEditPrompt: document.getElementById('enhanceEditPrompt').value === 'true',
         pasteToPath: document.getElementById('pasteToPath').value === 'true',
-        debugLogs: document.getElementById('debugLogs').value === 'true'
+        debugLogs: document.getElementById('debugLogs').value === 'true',
+        structuredOutput: (function () { var v = document.getElementById('structuredOutput').value; return v === '' ? undefined : v === 'true' })(),
+        timeoutMs: document.getElementById('timeoutMs').value.trim(),
+        extraBody: document.getElementById('extraBody').value,
+        proxyMode: document.getElementById('proxyMode').value,
+        proxy: document.getElementById('proxy').value.trim(),
+        requestTemplate: (function () {
+          var raw = document.getElementById('rtTemplate').value.trim()
+          if (raw === '') return undefined
+          try {
+            var o = JSON.parse(raw)
+            if (o && typeof o === 'object') { o.enabled = document.getElementById('rtEnabled').value === 'true' }
+            return o
+          } catch (e) { return raw }
+        })()
       }
       if (keyVal !== '' && keyVal !== '••••••') body.apiKey = keyVal
       var r = await fetch('/visionforge/settings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
@@ -791,6 +1322,172 @@ function settingsPageHtml() {
       renderEngine(engineId)
     } catch (e) { msg.textContent = '保存失败：' + e.message; msg.className = 'err' }
     b.disabled = false
+  }
+  function inferTemplate(kind, sampleEl, targetEl, msgEl) {
+    var sample = sampleEl.value.trim()
+    if (!sample) { msgEl.textContent = '请先粘贴官方 JSON 示例'; msgEl.className = 'err'; return }
+    var body
+    try { body = JSON.parse(sample) } catch (e) { msgEl.textContent = '示例不是合法 JSON：' + e.message; msgEl.className = 'err'; return }
+    fetch('/visionforge/settings/infer-template', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind: kind, sample: body }) })
+      .then(function (r) { return r.json() })
+      .then(function (res) {
+        if (!res.ok) { msgEl.textContent = '推断失败：' + (res.error || ''); msgEl.className = 'err'; return }
+        var out = res.template
+        if (out === null || out === undefined || (Array.isArray(out) && out.length === 0)) {
+          msgEl.textContent = '未能识别示例中的可变字段，请手动填写模板 JSON'; msgEl.className = 'err'; return
+        }
+        var prev = null
+        try { prev = JSON.parse(document.getElementById('rtTemplate').value || 'null') } catch (e) {}
+        var merged = prev && typeof prev === 'object' ? prev : {}
+        if (kind === 'read') { merged.read = out }
+        else if (kind === 'generate') { merged.generate = out }
+        else if (kind === 'extract') { if (!merged.extract || typeof merged.extract !== 'object') merged.extract = {}; merged.extract.generate = { images: out } }
+        document.getElementById('rtTemplate').value = JSON.stringify(merged, null, 2)
+        msgEl.textContent = '已生成模板（可再编辑后保存）'; msgEl.className = 'ok'
+      })
+      .catch(function (e) { msgEl.textContent = '推断请求失败：' + e.message; msgEl.className = 'err' })
+  }
+  var rtReadBtn = document.getElementById('rtReadInfer')
+  if (rtReadBtn) rtReadBtn.onclick = function () { inferTemplate('read', document.getElementById('rtReadSample'), document.getElementById('rtTemplate'), msg) }
+  var rtGenBtn = document.getElementById('rtGenInfer')
+  if (rtGenBtn) rtGenBtn.onclick = function () { inferTemplate('generate', document.getElementById('rtGenSample'), document.getElementById('rtTemplate'), msg) }
+  var rtRespBtn = document.getElementById('rtRespInfer')
+  if (rtRespBtn) rtRespBtn.onclick = function () { inferTemplate('extract', document.getElementById('rtRespSample'), document.getElementById('rtTemplate'), msg) }
+  // ---- 自定义引擎（翻译器）----
+  var cMsg = document.getElementById('cMsg')
+  var editingCustom = null
+  var DOMAIN_HINTS = [
+    { re: /generativelanguage|googleapis\.com/, family: 'gemini' },
+    { re: /anthropic\.com/, family: 'anthropic' },
+    { re: /openai\.com|azure\.com|qianwen|dashscope|bigmodel|deepseek|moonshot|z\.ai|siliconflow|openrouter|groq|mistral|together/, family: 'openai-compatible' }
+  ]
+  function familyFromUrl(url) {
+    for (var i = 0; i < DOMAIN_HINTS.length; i++) {
+      if (DOMAIN_HINTS[i].re.test(url || '')) return DOMAIN_HINTS[i].family
+    }
+    return ''
+  }
+  function levenshtein(a, b) {
+    var m = a.length, n = b.length
+    var dp = new Array(n + 1)
+    for (var j = 0; j <= n; j++) dp[j] = j
+    for (var i = 1; i <= m; i++) {
+      var prev = dp[0]; dp[0] = i
+      for (var j = 1; j <= n; j++) {
+        var tmp = dp[j]
+        dp[j] = Math.min(dp[j] + 1, dp[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1))
+        prev = tmp
+      }
+    }
+    return dp[n]
+  }
+  function normalizeName(raw) {
+    return (raw || '').toLowerCase().replace(/[^a-z0-9._-]+/g, '').replace(/^[^a-z0-9]+/, '').slice(0, 40)
+  }
+  function nameHints(raw) {
+    var id = normalizeName(raw)
+    var hints = []
+    if (!id) { hints.push({ text: '请输入引擎名称', err: false }); return hints }
+    if (raw !== id) hints.push({ text: '已规范为：' + id, err: false })
+    var builtin = Object.keys(DATA.engines).filter(function (k) { return !DATA.customs[k] })
+    if (builtin.indexOf(id) >= 0 || DATA.customs[id]) {
+      hints.push({ text: '「' + id + '」已存在（内置或自定义），请换一个名称', err: true })
+    }
+    var best = null
+    for (var i = 0; i < builtin.length; i++) {
+      var d = levenshtein(id, builtin[i])
+      if (d > 0 && d <= 2 && (!best || d < best.d)) best = { name: builtin[i], d: d }
+    }
+    if (best) hints.push({ text: '与内置引擎「' + best.name + '」拼写相近（距离 ' + best.d + '）。如需使用内置引擎，请直接在上方选择；确认新增同名引擎可继续', err: false })
+    return hints
+  }
+  function renderCustomList() {
+    var el = document.getElementById('customList')
+    var ids = Object.keys(DATA.customs)
+    el.innerHTML = ids.length === 0
+      ? '（暂无自定义引擎，点击上方按钮添加）'
+      : ids.map(function (id) {
+          var c = DATA.customs[id]
+          var caps = []
+          if (c.models.some(function (m) { return m.capabilities.read })) caps.push('读图')
+          if (c.models.some(function (m) { return m.capabilities.generate || m.capabilities.edit })) caps.push('生图')
+          return '• ' + c.displayName + '（' + id + '）· 读图:' + c.readFamily + (c.genFamily ? ' · 生图:' + c.genFamily : '') + (caps.length ? ' · ' + caps.join('/') : '') + ' · ' + (c.apiKey ? '密钥已配置' : '密钥未配置') + ' <a href="#" data-remove="' + id + '">删除</a>'
+        }).join('<br>')
+    el.querySelectorAll('a[data-remove]').forEach(function (a) {
+      a.onclick = function (e) {
+        e.preventDefault()
+        if (!confirm('确定删除自定义引擎「' + a.getAttribute('data-remove') + '」？')) return
+        removeCustomEngine(a.getAttribute('data-remove'))
+      }
+    })
+  }
+  async function removeCustomEngine(id) {
+    var b = this; cMsg.textContent = '删除中…'; cMsg.className = ''
+    try {
+      var r = await fetch('/visionforge/settings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ custom: { action: 'remove', name: id } }) })
+      var j = await r.json()
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status))
+      cMsg.textContent = '✓ 已删除引擎「' + id + '」'; cMsg.className = 'ok'
+      DATA = await (await fetch('/visionforge/settings/api')).json()
+      renderCustomList()
+      renderEngine(document.getElementById('engine').value)
+    } catch (e) { cMsg.textContent = '删除失败：' + e.message; cMsg.className = 'err' }
+  }
+  function openCustomEditor(entry, id) {
+    editingCustom = id || null
+    var box = document.getElementById('addCustom')
+    box.classList.remove('hidden')
+    document.getElementById('toggleAddCustom').textContent = editingCustom ? '收起编辑器' : '+ 添加自定义引擎'
+    document.getElementById('cName').value = entry ? entry.id || '' : ''
+    document.getElementById('cDisplay').value = entry ? entry.displayName || '' : ''
+    document.getElementById('cNameHint').textContent = '自动规范为小写字母、数字、-、_、.（最长 40 字符）'
+    cMsg.textContent = ''
+    if (editingCustom) document.getElementById('cName').setAttribute('readonly', 'readonly')
+    else document.getElementById('cName').removeAttribute('readonly')
+    box.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+  document.getElementById('toggleAddCustom').onclick = function () {
+    var box = document.getElementById('addCustom')
+    if (!box.classList.contains('hidden')) { box.classList.add('hidden'); return }
+    openCustomEditor(null)
+  }
+  document.getElementById('cName').oninput = function () {
+    var hints = nameHints(this.value)
+    document.getElementById('cNameHint').textContent = hints.map(function (h) { return h.text }).join('；')
+    document.getElementById('cNameHint').style.color = hints.some(function (h) { return h.err }) ? '#c33' : '#999'
+  }
+  document.getElementById('saveCustom').onclick = async function () {
+    var b = this; b.disabled = true; cMsg.textContent = '保存中…'; cMsg.className = ''
+    try {
+      var id = normalizeName(document.getElementById('cName').value)
+      if (!id) throw new Error('请填写引擎名称')
+      var builtin = Object.keys(DATA.engines).filter(function (k) { return !DATA.customs[k] })
+      if (builtin.indexOf(id) >= 0 || DATA.customs[id]) throw new Error('「' + id + '」已存在（内置或自定义），请换一个名称')
+      var displayName = document.getElementById('cDisplay').value.trim() || id
+      // 前端注册进引擎下拉并选中；接口地址/密钥/模型在下方通用字段填写后由主「保存」落盘
+      DATA.engines[id] = { label: displayName, models: [], caps: {}, custom: true }
+      DATA.customs[id] = { id: id, displayName: displayName, models: [], readFamily: '', genFamily: '', apiKey: '' }
+      var sel = document.getElementById('engine')
+      sel.innerHTML = ''
+      var keys = Object.keys(DATA.engines)
+      for (var i = 0; i < keys.length; i++) {
+        var op = document.createElement('option')
+        op.value = keys[i]; op.textContent = DATA.engines[keys[i]].label + capSuffix(DATA.engines[keys[i]])
+        sel.appendChild(op)
+      }
+      sel.value = id
+      renderEngine(id)
+      renderCustomList()
+      document.getElementById('addCustom').classList.add('hidden')
+      document.getElementById('toggleAddCustom').textContent = '+ 添加自定义引擎'
+      cMsg.textContent = '✓ 已添加引擎「' + id + '」，请在下方填写接口地址、API 密钥与模型后点「保存」'; cMsg.className = 'ok'
+    } catch (e) { cMsg.textContent = '添加失败：' + e.message; cMsg.className = 'err' }
+    b.disabled = false
+  }
+  // 初始化自定义引擎列表（DATA 加载后调用）
+  var initCustom = function () {
+    if (!DATA) return
+    renderCustomList()
   }
 </script>
 `;
@@ -815,28 +1512,16 @@ function startSettingsServer() {
           if (url.pathname === '/visionforge/settings/api' && req.method === 'GET') {
             let config = {}
             try { config = readConfig() } catch { config = {} }
-            const providers = config.providers ?? {}
-            const current = config.provider !== undefined && ENGINES.includes(config.provider) ? config.provider : 'qwen'
-            const engines = {}
-            const settings = {}
-            for (const id of ENGINES) {
-              const meta = ENGINE_META[id] ?? { label: id, baseUrl: '', models: [] }
-              const stored = providers[id] ?? {}
-              engines[id] = {
-                label: meta.label,
-                keyless: KEYLESS_ENGINES.includes(id),
-                baseUrl: typeof meta.baseUrl === 'string' ? meta.baseUrl : '',
-                models: Array.isArray(meta.models) ? meta.models : [],
-              }
-              settings[id] = {
-                baseUrl: typeof stored.baseUrl === 'string' ? stored.baseUrl : '',
-                model: typeof stored.model === 'string' ? stored.model : '',
-                hasKey: hasKey(stored.apiKey),
-              }
-            }
+            const current = config.provider !== undefined && (ENGINES.includes(config.provider) || Object.hasOwn(config.customProviders ?? {}, config.provider))
+              ? config.provider
+              : 'qwen'
+            const { engines, settings, customs } = allEngineMeta(config)
             sendJson(200, {
               engines,
               settings,
+              customs,
+              readFamilies: READ_FAMILIES,
+              genFamilies: GEN_FAMILIES,
               current,
               visionPriority: config.visionPriority === 'plugin' ? 'plugin' : 'official',
               outputDir: typeof config.outputDir === 'string' && config.outputDir.trim() !== '' ? config.outputDir : outputDir(),
@@ -844,6 +1529,52 @@ function startSettingsServer() {
               debugLogs: config.debugLogs === true,
               lastRead: (() => { try { return JSON.parse(readFileSync(join(homedir(), '.visionforge', 'last-read.json'), 'utf8')) } catch { return null } })(),
             })
+            return
+          }
+          if (url.pathname === '/visionforge/cache/stats' && req.method === 'GET') {
+            cacheStats().then((stats) => sendJson(200, stats)).catch((e) => sendJson(500, { error: String(e.message || e) }))
+            return
+          }
+          if (url.pathname === '/visionforge/cache/clean' && req.method === 'POST') {
+            ;(async () => {
+              const { removed, freed } = await sweepCaches(Date.now(), 0, sessionTracked)
+              let featRemoved = 0
+              let featFreed = 0
+              try {
+                const { readdir, stat, rm } = await import('node:fs/promises')
+                const featuresDir = join(dirname(resolve(outputDir())), 'features')
+                for (const entry of await readdir(featuresDir, { withFileTypes: true })) {
+                  if (!entry.isFile()) continue
+                  const full = join(featuresDir, entry.name)
+                  try { const info = await stat(full); await rm(full, { force: true }); featRemoved++; featFreed += info.size } catch { /* best-effort */ }
+                }
+              } catch { /* best-effort */ }
+              const stats = await cacheStats()
+              sendJson(200, { removed, freed, featRemoved, featFreed, kept: sessionTracked.size, stats })
+            })().catch((e) => sendJson(500, { error: String(e.message || e) }))
+            return
+          }
+          if (url.pathname === '/visionforge/settings/infer-template' && req.method === 'POST') {
+            const chunks = []
+            let total = 0
+            ;(async () => {
+              for await (const chunk of req) {
+                total += chunk.length
+                if (total > 256 * 1024) { sendJson(413, { error: 'payload too large' }); req.destroy(); return }
+                chunks.push(chunk)
+              }
+              const payload = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
+              const kind = payload.kind
+              const sample = payload.sample
+              if (!sample || typeof sample !== 'object') { sendJson(400, { error: 'missing sample' }); return }
+              let template = null
+              if (kind === 'read') template = inferReadRequestTemplate(sample)
+              else if (kind === 'generate') template = inferGenRequestTemplate(sample)
+              else if (kind === 'extract') template = inferGenImagePaths(sample)
+              else if (kind === 'extract-read') template = { path: inferReadContentPath(sample) }
+              else { sendJson(400, { error: 'unknown kind: ' + kind }); return }
+              sendJson(200, { ok: true, template })
+            })().catch((e) => sendJson(500, { error: String(e.message || e) }))
             return
           }
           if (url.pathname === '/visionforge/settings' && req.method === 'POST') {
@@ -856,9 +1587,14 @@ function startSettingsServer() {
                 chunks.push(chunk)
               }
               const patch = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
-              const engineId = typeof patch.provider === 'string' && ENGINES.includes(patch.provider)
+              if (patch.custom) {
+                const result = applyCustomSettings(patch.custom)
+                sendJson(200, { ok: true, ...result })
+                return
+              }
+              const engineId = typeof patch.provider === 'string' && (ENGINES.includes(patch.provider) || Object.hasOwn(readConfig().customProviders ?? {}, patch.provider))
                 ? patch.provider
-                : (typeof patch.engine === 'string' && ENGINES.includes(patch.engine) ? patch.engine : undefined)
+                : (typeof patch.engine === 'string' && (ENGINES.includes(patch.engine) || Object.hasOwn(readConfig().customProviders ?? {}, patch.engine)) ? patch.engine : undefined)
               const enginePatch = {}
               if (engineId !== undefined) {
                 enginePatch.provider = engineId
@@ -966,6 +1702,7 @@ async function savePasteBytes(buffer) {
   await writeFile(file, buffer, { mode: 0o600 })
   recentPastePaths.push(file)
   if (recentPastePaths.length > RECENT_PASTE_CAP) recentPastePaths.shift()
+  sessionTracked.add(resolve(file))
   return file
 }
 
@@ -1071,7 +1808,30 @@ function makeReadTool(toolName, recentPastePathsRef, toolCache) {
             const last = attempts[attempts.length - 1]
             writeFileSync(join(homedir(), '.visionforge', 'last-read.json'), JSON.stringify({ at: new Date().toISOString(), provider: (last && last.provider) || '', model: (last && last.model) || '', attempts }, null, 2) + '\n', { mode: 0o600 })
           } catch { /* best-effort */ }
-          return parsed.result
+          // B4 特征摘要：从证据中提取人物/场景/风格摘要，落盘缓存 + 附加到返回结果，
+          // 宿主构建图生图 prompt 时可直接引用（身份锚定），提升人物一致性
+          const readResult = parsed && parsed.result && typeof parsed.result === 'object' ? parsed.result : {}
+          try {
+            const sem = readResult.semantics && typeof readResult.semantics === 'object' ? readResult.semantics : {}
+            const vis = readResult.visual && typeof readResult.visual === 'object' ? readResult.visual : {}
+            const ents = Array.isArray(sem.entities) ? sem.entities : []
+            const people = ents.filter((e) => e && (String(e.type || '').toLowerCase().includes('person') || String(e.type || '').includes('人') || String(e.name || '').includes('人')))
+            const parts = []
+            if (sem.scene) parts.push(`场景：${sem.scene}`)
+            if (people.length > 0) parts.push(`人物：${people.map((e) => e.evidence || e.name || '').filter(Boolean).join('；')}`)
+            else if (ents.length > 0) parts.push(`主体：${ents.map((e) => e.evidence || e.name || '').filter(Boolean).join('；')}`)
+            if (vis.style) parts.push(`风格：${vis.style}`)
+            if (Array.isArray(vis.notes) && vis.notes.length > 0) parts.push(`细节：${vis.notes.join('；')}`)
+            if (parts.length > 0) {
+              const featureSummary = parts.join('。')
+              const featuresDir = join(dirname(outputDir()), 'features')
+              mkdirSync(featuresDir, { recursive: true })
+              const hash = createHash('sha256').update(sourceKey).digest('hex').slice(0, 12)
+              writeFileSync(join(featuresDir, `${hash}.json`), JSON.stringify({ at: new Date().toISOString(), path, featureSummary }, null, 2) + "\n", { mode: 0o600 })
+              readResult.featureSummary = featureSummary
+            }
+          } catch { /* best-effort */ }
+          return readResult
         })()
         toolCache.set(cacheKey, run)
         run.catch(() => { toolCache.delete(cacheKey) })
@@ -1088,25 +1848,25 @@ function makeGenTool(toolName, mode, outputDirOfConfig) {
     description:
       mode === 'generate'
         ? 'Generate an image from a text description through the VisionForge image bridge (Qwen-Image via qwen.apiKey, or GLM-Image via glm.apiKey). Requires at least one of these keys (run `npx @lr611/visionforge doctor`, or `visionforge config set qwen.apiKey <key>`). Returns the saved local file path and a temporary URL. After success, copy the ENTIRE markdown block from the tool result (the [![生成的图片](图片URL)](本地预览地址) preview line plus the download line) verbatim into your final reply, and nothing else about the files: do not list the file paths as plain text and do not paste the provider URL anywhere. Clicking the preview must open the local preview address, never the provider URL. The result also carries a previewMarkdown field containing the ready preview+download markdown: reply with exactly that block as your final answer and nothing else about the files. EVERY call outputs exactly ONE image: never call this tool multiple times to offer the user "a choice of candidates" unless the user explicitly asked for N images. When the user asks for N images, call this tool N times and vary the prompt each time (e.g. append "variant 1/N: ...") so the results differ; never repeat the same prompt verbatim across calls.'
-        : 'Edit images from a text instruction through the VisionForge image bridge (Qwen-Image edit only; GLM-Image does not support editing). Requires the qwen.apiKey. Input accepts 1-3 absolute local file paths or http(s) URLs (multi-image fusion: e.g. merge two faces into one scene), or the string "auto" to use the images most recently pasted into the composer (up to 3). When the message carries pasted images and the user asks to fuse / edit / modify them (e.g. merge two photos, change an expression), call this tool with input:"auto" — the official reading model understands the request, this tool performs the edit through their provider keys. Set count to request multiple outputs (1-6). Returns the saved local file path(s) and temporary URL(s). After success, copy the ENTIRE markdown block from the tool result (one preview line per image: [![生成图 N](图片URL)](本地预览地址), plus the download lines) verbatim into your final reply, and nothing else about the files: do not list the file paths as plain text and do not paste the provider URLs anywhere. Clicking a preview must open its local preview address, never the provider URL. The result also carries a previewMarkdown field containing the ready preview+download markdown: reply with exactly that block as your final answer and nothing else about the files. NOTE: input:"auto" resolves the images VisionForge itself tracked from pasted composer content; images uploaded via DSH attachments/drag may not be tracked, so if auto edits the wrong image, locate the actual file (e.g. in the workspace) and pass its explicit path.',
+        : 'IMPORTANT: BEFORE calling this tool to edit/fuse images, you MUST first call visionforge_read_image on the input image(s) to learn the people\'s actual pose, body shape, clothing, hairstyle, expression and the scene — this is the plugin\'s eye. Then construct the prompt from that real evidence and lock the identity of every person the user did NOT explicitly ask to modify (keep face, hairstyle, body shape unchanged; modify ONLY what the user named). NEVER call this tool without first reading the input image(s), unless the request is pure text-to-image (generate). Full prompt-quality rules (MANDATORY DETAIL FORMAT: IDENTITY / DYNAMICS / CONTACT PHYSICS / SCENE & LIGHT, and the pose-expansion duty) live in the VisionForge skill — read its 图生图指令细节格式 section and follow it when writing the edit prompt; brief poses must be expanded into concrete geometric language with negative examples (e.g. 侧坐 → 侧身坐，双腿并拢垂放在自行车同一侧，不是跨坐、不是双腿分开). Edit images from a text instruction through the VisionForge image bridge (Qwen-Image edit only; GLM-Image does not support editing). Requires the qwen.apiKey. Input accepts 1-3 absolute local file paths or http(s) URLs (multi-image fusion: e.g. merge two faces into one scene), or the string "auto" to use the images most recently pasted into the composer (up to 3). Set count to request multiple outputs (1-6). After success, copy the ENTIRE markdown block from the tool result (one preview line per image: [![生成图 N](图片URL)](本地预览地址), plus the download lines) verbatim into your final reply, and nothing else about the files: do not list the file paths as plain text and do not paste the provider URLs anywhere. The result also carries a previewMarkdown field containing the ready preview+download markdown: reply with exactly that block and nothing else about the files. NOTE: input:"auto" resolves the images VisionForge itself tracked from pasted composer content; images uploaded via DSH attachments/drag may not be tracked, so if auto edits the wrong image, locate the actual file (e.g. in the workspace) and pass its explicit path.',
     parameters: {
       type: 'object',
       properties:
         mode === 'generate'
           ? {
-              prompt: { type: 'string', description: 'Text description of the image to generate' },
-              size: { type: 'string', description: 'Output size, e.g. 1024x1024 (default 1024*1024)' },
+              prompt: { type: 'string', description: 'Text description of the image to generate. PROMPT-WRITING GUIDE (mandatory, following the Doubao/Jimeng image-prompt formula): write AT LEAST 50 characters covering ALL SIX dimensions — 1) subject & its concrete features (age/build/hair/clothing/color), 2) action/pose in concrete geometric terms (e.g. 侧坐 → 双腿并拢垂放在车身一侧; never a bare pose word), 3) scene/environment, 4) lighting/atmosphere (light source + direction + mood), 5) composition/view, 6) quality words (写实/高清/细节/光影层次). The plugin only appends protective boundary constraints; IT WILL NOT write these details for you, and its result warns you with a `注意:` line naming exactly which dimensions are missing (short prompts under 50 characters or fewer than 3 dimensions are flagged). If you see that warning, expand the prompt per this guide before generating — do not call with a bare short prompt. Do not invent objects/people the user did not ask for; keep the user\'s objective requirements intact.' },
+              size: { type: 'string', description: 'Output size in WxH format, or a resolution word like 2K/4K/1080P. LEAVE EMPTY unless the user explicitly asked for a specific resolution: empty = engine-best default (2K/2560x1440 where supported, else the engine maximum). IMPORTANT: never pass the legacy default 1536x1024 - the engines support much higher resolution; passing it degrades quality. Do not invent any numeric size on your own; if in doubt, leave it empty.' },
               output: { type: 'string', description: 'Optional save path (default: D:\\VisionForge\\out with a timestamped name)' },
-              provider: { type: 'string', description: 'Optional provider: qwen or glm (default: qwen if configured, else glm)' },
+              provider: { type: 'string', description: 'Optional provider: qwen, glm, or a custom engine id (default: user default engine, then qwen if configured, else glm)' },
               model: { type: 'string', description: 'Optional model name (default: qwen-image or glm-image)' },
             }
           : {
               input: { type: 'array', items: { type: 'string' }, description: '1-3 absolute local file paths or http(s) URLs of the images to edit/fuse (single string also accepted), or the single string "auto" to use the most recently pasted images (up to 3)' },
-              prompt: { type: 'string', description: 'Editing instruction' },
+              prompt: { type: 'string', description: 'Editing instruction. PROMPT-WRITING GUIDE (mandatory, following the Doubao/Jimeng image-prompt formula): write AT LEAST 50 characters covering, in order: 1) who must stay identical (face/hairstyle/body — lock identity unless the user explicitly asked to change it), 2) what to change, concretely, 3) action/pose in concrete geometric terms (e.g. 侧坐 → 双腿并拢垂放在车身一侧; never a bare pose word), 4) scene/environment, 5) lighting/atmosphere (light source + direction + mood), 6) quality words (写实/高清/细节/光影层次). The plugin only appends protective boundary constraints; IT WILL NOT write these details for you, and its result warns you with a `注意:` line naming exactly which dimensions are missing (short prompts under 50 characters or fewer than 3 dimensions are flagged). If you see that warning, expand the prompt per this guide before generating — do not call with a bare short prompt.' },
               count: { type: 'integer', minimum: 1, maximum: 6, description: 'Number of images to output (default 1). Set >1 ONLY when the user explicitly asked for multiple outputs; every output then differs from the others.' },
-              size: { type: 'string', description: 'Output size, e.g. 1024x1024 (default 1024*1024)' },
+              size: { type: 'string', description: 'Output size in WxH format, or a resolution word like 2K/4K/1080P. LEAVE EMPTY unless the user explicitly asked for a specific resolution: empty = engine-best default (2K/2560x1440 where supported, else the engine maximum). IMPORTANT: never pass the legacy default 1536x1024 - the engines support much higher resolution; passing it degrades quality. Do not invent any numeric size on your own; if in doubt, leave it empty.' },
               output: { type: 'string', description: 'Optional save path for the first output (default: D:\\VisionForge\\out with a timestamped name)' },
-              model: { type: 'string', description: 'Optional model name (default: qwen-image-edit)' },
+              model: { type: 'string', description: 'Optional model name (default: engine default model)' },
             },
       required: mode === 'generate' ? ['prompt'] : ['input', 'prompt'],
     },
@@ -1199,6 +1959,8 @@ function makeGenTool(toolName, mode, outputDirOfConfig) {
             })()
       if (merged && typeof merged === 'object' && !Array.isArray(merged)) {
         merged.previewMarkdown = buildPreviewMarkdown(merged)
+        const produced = Array.isArray(merged.filePaths) ? merged.filePaths : [merged.filePath]
+        for (const fp of produced) if (typeof fp === 'string') sessionTracked.add(resolve(fp))
       }
       return merged
     },
@@ -1614,11 +2376,13 @@ function registerAutoRead(ctx, evidenceCache) {
 }
 
 // ---- 缓存清扫 ----------------------------------------------------------------------
-async function sweepCaches(now = Date.now(), ttlMs = CACHE_TTL_MS) {
+async function sweepCaches(now = Date.now(), ttlMs = CACHE_TTL_MS, skipSet = null) {
+  let removed = 0
+  let freed = 0
   try {
     const { readdir, stat, rm } = await import('node:fs/promises')
     const outDir = resolve(outputDir())
-    if (!existsSync(outDir)) return
+    if (!existsSync(outDir)) return { removed, freed }
     async function walk(dir) {
       for (const entry of await readdir(dir, { withFileTypes: true })) {
         const full = join(dir, entry.name)
@@ -1628,13 +2392,47 @@ async function sweepCaches(now = Date.now(), ttlMs = CACHE_TTL_MS) {
             continue
           }
           if (entry.name === 'save-debug.log') continue
+          if (skipSet && skipSet.has(resolve(full))) continue
           const info = await stat(full)
-          if (now - info.mtimeMs >= ttlMs) await rm(full, { force: true }).catch(() => {})
+          if (now - info.mtimeMs >= ttlMs) {
+            freed += info.size
+            removed++
+            await rm(full, { force: true }).catch(() => {})
+          }
         } catch { /* one bad entry never aborts the sweep */ }
       }
     }
     await walk(outDir)
   } catch { /* sweeping is housekeeping */ }
+  return { removed, freed }
+}
+
+// C2：统计输出目录（生成图 + 粘贴子目录）与特征缓存目录的占用
+async function cacheStats() {
+  const { readdir, stat } = await import('node:fs/promises')
+  const outDir = resolve(outputDir())
+  const featuresDir = join(dirname(outDir), 'features')
+  const pasteSep = `${sep}paste${sep}`
+  const stats = { outDir, featuresDir, outCount: 0, outBytes: 0, pasteCount: 0, pasteBytes: 0, featCount: 0, featBytes: 0 }
+  async function walk(dir, onFile) {
+    let entries = []
+    try { entries = await readdir(dir, { withFileTypes: true }) } catch { return }
+    for (const entry of entries) {
+      const full = join(dir, entry.name)
+      try {
+        if (entry.isDirectory()) { await walk(full, onFile); continue }
+        const info = await stat(full)
+        onFile(full, info.size)
+      } catch { /* skip unreadable */ }
+    }
+  }
+  await walk(outDir, (full, size) => {
+    if (full.includes(pasteSep)) { stats.pasteCount++; stats.pasteBytes += size } else { stats.outCount++; stats.outBytes += size }
+  })
+  await walk(featuresDir, (_f, size) => { stats.featCount++; stats.featBytes += size })
+  stats.totalBytes = stats.outBytes + stats.pasteBytes + stats.featBytes
+  stats.totalCount = stats.outCount + stats.pasteCount + stats.featCount
+  return stats
 }
 
 // ---- 宿主 webServer 路由 ------------------------------------------------------------

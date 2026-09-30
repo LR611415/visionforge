@@ -11,15 +11,33 @@ import { Command } from 'commander';
 
 import { analyzeImage } from './analyze.js';
 import { buildCooldownController, clearAllCooldowns, currentStatePath } from './cooldown.js';
+import {
+    canonicalizeName,
+    checkNameConflicts,
+    GEN_FAMILIES,
+    READ_FAMILIES,
+    readCustomProviders,
+    suggestBuiltinName,
+    suggestFamilyFromBaseUrl,
+} from './custom-providers.js';
 import { buildDoctorReport, renderDoctorReport } from './doctor.js';
 import { runGuard } from './guard.js';
 import { editImage, generateImage } from './imagegen.js';
 import { listProviders } from './providers/index.js';
 import { recoverPastedImages } from './recover-paste.js';
-import { CONFIG_PATH, initConfigFile, loadConfigFile, renderEffectiveConfig, saveProviderBundle, setConfigValue, useProviderBundle } from './config.js';
+import {
+    CONFIG_PATH,
+    initConfigFile,
+    loadConfigFile,
+    persistConfig,
+    renderEffectiveConfig,
+    saveProviderBundle,
+    setConfigValue,
+    useProviderBundle,
+} from './config.js';
 import { parseExtraBody } from './util.js';
 
-const VERSION = '0.1.8';
+const VERSION = '0.1.9';
 
 function parsePositiveInt(raw, flag) {
     if (!/^\d+$/.test(raw.trim()) || Number.parseInt(raw, 10) <= 0) {
@@ -133,9 +151,10 @@ program
     .description('Generate an image from text (Qwen-Image via qwen key, or GLM-Image via glm key). Requires at least one image-generation key: qwen.apiKey or glm.apiKey.')
     .requiredOption('-p, --prompt <text>', 'Text description of the image to generate')
     .option('-o, --output <path>', 'Save the image to this path (default: ~/.visionforge/out/ with a timestamped name)')
-    .option('--size <wxh>', 'Output size, e.g. 1024x1024 (qwen) / 1280x1280 (glm)', '1024*1024')
+    .option('--size <wxh>', 'Output size: 4k / 2.5k / 2k / 1080p / WxH (default: engine-best 2048x2048)')
     .option('-m, --model <name>', 'Generation model name (default: qwen-image or glm-image)')
-    .option('--provider <name>', 'Force the provider: qwen or glm (default: qwen if configured, else glm)')
+    .option('-e, --engine <name>', 'Force the provider: qwen, glm, or a custom engine id (default: qwen if configured, else glm)')
+    .option('--provider <name>', 'Alias of --engine')
     .option('--timeout <ms>', 'Provider timeout in milliseconds', '120000')
     .action(async (options) => {
         try {
@@ -145,7 +164,7 @@ program
                 size: options.size,
                 output: options.output,
                 model: options.model,
-                provider: options.provider,
+                provider: options.provider ?? options.engine,
                 config: loadConfigFile(),
                 timeoutMs,
             });
@@ -163,8 +182,11 @@ program
     .requiredOption('-p, --prompt <text>', 'Editing instruction')
     .option('-o, --output <path>', 'Save the edited image(s) to this path (default: ~/.visionforge/out/ with a timestamped name; for multiple outputs only the first is saved here)')
     .option('-n, --count <n>', 'Number of images to output (1-6, default 1)', '1')
-    .option('--size <wxh>', 'Output size, e.g. 1024x1024', '1024*1024')
+    .option('--size <wxh>', 'Output size: 4k / 2.5k / 2k / 1080p / WxH (default: engine-best 2048x2048)')
     .option('-m, --model <name>', 'Editing model name (default: qwen-image-edit)')
+    .option('-e, --engine <name>', 'Force the provider: qwen or a custom engine id (default: qwen)')
+    .option('--provider <name>', 'Alias of --engine')
+    .option('--no-enhance', 'Disable automatic edit-prompt enhancement (protective constraints)')
     .option('--timeout <ms>', 'Provider timeout in milliseconds', '120000')
     .action(async (options) => {
         try {
@@ -177,6 +199,8 @@ program
                 size: options.size,
                 output: options.output,
                 model: options.model,
+                provider: options.provider ?? options.engine,
+                enhance: options.enhance !== false,
                 config: loadConfigFile(),
                 timeoutMs,
             });
@@ -238,6 +262,7 @@ program
     .command('doctor')
     .description('Diagnose local config and routing (Node, providers, selection, harness) without spending quota or hitting the network')
     .option('--json', 'Emit the report as JSON')
+    .option('--uninstall-check', 'List every local footprint the plugin leaves behind (config, cache, dsh installs) for a clean uninstall')
     .option('-p, --provider <name>', 'Show which provider this -p value would select')
     .action((options) => {
         try {
@@ -245,6 +270,7 @@ program
                 config: loadConfigFile(),
                 env: process.env,
                 providerFlag: options.provider,
+                uninstallCheck: options.uninstallCheck === true,
                 configPath: CONFIG_PATH,
                 // 让 doctor 能点名比当前 CLI 更旧的已安装 skill 副本。
                 version: VERSION,
@@ -343,6 +369,193 @@ config
         } catch (error) {
             process.stderr.write(`Error: ${error instanceof Error ? error.message : String(error)}\n`);
             process.exitCode = 1;
+        }
+    });
+
+config
+    .command('add-engine <name>')
+    .description(
+        'Add a custom engine (Google Gemini, Imagen, or any vendor). The name is normalized automatically; built-in names are refused. Configure its key and models now or later in the DSH settings card.',
+    )
+    .requiredOption('--base-url <url>', 'Engine API base URL (e.g. https://generativelanguage.googleapis.com)')
+    .option('--api-key <key>', 'API key (optional: leave it out and fill it in the settings card later)')
+    .option('--display-name <name>', 'Display name shown in the UI (defaults to the engine id)')
+    .option('--read-family <family>', `Vision request format (${READ_FAMILIES.join(', ')}; default: openai-compatible)`)
+    .option('--gen-family <family>', `Image generation format (${GEN_FAMILIES.join(', ')}; omit to disable generation)`)
+    .option('--model <name>', 'Default vision model (optional: fill it in the settings card later)')
+    .option('--gen-model <name>', 'Image generation model (optional; enables generation when set)')
+    .action(async (name, options) => {
+        try {
+            const id = canonicalizeName(name);
+            const conflict = checkNameConflicts(id, loadConfigFile());
+            if (conflict) {
+                throw new Error(conflict.message);
+            }
+            const suggestion = suggestBuiltinName(id);
+            if (suggestion && suggestion.suggestion !== id) {
+                process.stdout.write(
+                    `提示：「${name}」与内置引擎「${suggestion.folded}」拼写相近（编辑距离 ${suggestion.distance}）。如需使用内置引擎，请配置其字段而非新增；确认新增同名引擎可继续。\n`,
+                );
+            }
+            const domainHint = suggestFamilyFromBaseUrl(options.baseUrl);
+            const readFamily = options.readFamily || domainHint.family || 'openai-compatible';
+            if (!options.readFamily && domainHint.family) {
+                process.stdout.write(`已按接口域名识别读图协议族：${readFamily}（可用 --read-family 覆盖）\n`);
+            }
+            if (options.readFamily && !READ_FAMILIES.includes(options.readFamily)) {
+                throw new Error(`Unknown --read-family: ${options.readFamily}. Use ${READ_FAMILIES.join(', ')}.`);
+            }
+            if (options.genFamily && !GEN_FAMILIES.includes(options.genFamily)) {
+                throw new Error(`Unknown --gen-family: ${options.genFamily}. Use ${GEN_FAMILIES.join(', ')}.`);
+            }
+            const config = loadConfigFile();
+            config.customProviders ??= {};
+            const models = [];
+            if (options.model) {
+                models.push({ name: options.model, capabilities: { read: true, generate: false, edit: false } });
+            }
+            if (options.genModel) {
+                models.push({ name: options.genModel, capabilities: { read: false, generate: true, edit: false } });
+            }
+            config.customProviders[id] = {
+                displayName: options.displayName || id,
+                baseUrl: options.baseUrl,
+                ...(options.apiKey ? { apiKey: options.apiKey } : {}),
+                readFamily,
+                ...(options.genFamily ? { genFamily: options.genFamily } : options.genModel ? { genFamily: 'openai-image' } : {}),
+                ...(models.length > 0 ? { models } : {}),
+                ...(options.model ? { model: options.model } : {}),
+            };
+            persistConfig(config);
+            process.stdout.write(
+                [
+                    `已添加自定义引擎「${id}」（显示名：${options.displayName || id}）到 ${CONFIG_PATH}`,
+                    `  读图协议族: ${readFamily}${options.genFamily || options.genModel ? `；生图协议族: ${options.genFamily || (options.genModel ? 'openai-image' : '')}` : '（未启用生图）'}`,
+                    options.apiKey ? '  API key: 已保存' : '  API key: 未配置 → 在 DSH 设置卡片或运行 visionforge config set custom.<name>.apiKey 填写',
+                    options.model ? `  视觉模型: ${options.model}` : '  视觉模型: 未配置 → 在设置卡片或 config set custom.<name>.model 填写',
+                    `  查看: visionforge config show / doctor；删除: visionforge config remove-engine ${id}`,
+                ].join('\n') + '\n',
+            );
+        } catch (error) {
+            process.stderr.write(`Error: ${error instanceof Error ? error.message : String(error)}\n`);
+            process.exitCode = 1;
+        }
+    });
+
+config
+    .command('remove-engine <name>')
+    .description('Remove a custom engine you added. Built-in engines cannot be removed.')
+    .action((name) => {
+        try {
+            const id = canonicalizeName(name);
+            const config = loadConfigFile();
+            const customs = readCustomProviders(config);
+            if (!Object.hasOwn(customs, id)) {
+                const conflict = checkNameConflicts(id, config);
+                throw new Error(
+                    conflict?.kind === 'builtin'
+                        ? `「${name}」是内置引擎，不能删除。`
+                        : `自定义引擎「${id}」不存在。运行 visionforge config list-custom 查看现有引擎。`,
+                );
+            }
+            delete config.customProviders[id];
+            if (config.provider === id) {
+                config.provider = '';
+            }
+            persistConfig(config);
+            process.stdout.write(`已删除自定义引擎「${id}」（${CONFIG_PATH}）。若已设为默认引擎，provider 已重置为空。\n`);
+        } catch (error) {
+            process.stderr.write(`Error: ${error instanceof Error ? error.message : String(error)}\n`);
+            process.exitCode = 1;
+        }
+    });
+
+config
+    .command('list-custom')
+    .description('List custom engines you added, with their read/generate families')
+    .action(() => {
+        try {
+            const customs = readCustomProviders(loadConfigFile());
+            const names = Object.keys(customs);
+            if (names.length === 0) {
+                process.stdout.write('（暂无自定义引擎。用 visionforge config add-engine <name> --base-url <url> 添加。）\n');
+                return;
+            }
+            process.stdout.write(
+                names
+                    .map((id) => {
+                        const entry = customs[id];
+                        const caps = ['read', 'generate', 'edit'].filter((c) => entry.capabilities[c] || entry.models.some((m) => m.capabilities[c]));
+                        return `- ${id} (${entry.displayName}): read=${entry.readFamily}${entry.genFamily ? `, generate=${entry.genFamily}` : ''}; ${caps.join('/') || 'read'}; ${entry.apiKey ? 'key 已配置' : 'key 未配置'}${entry.model ? `; model=${entry.model}` : '; model 未配置'}`;
+                    })
+                    .join('\n') + '\n',
+            );
+        } catch (error) {
+            process.stderr.write(`Error: ${error instanceof Error ? error.message : String(error)}\n`);
+            process.exitCode = 1;
+        }
+    });
+
+// 1×1 PNG（透明），用于引擎连通性测试
+function tinyPlaceholderPng() {
+    return Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        'base64',
+    );
+}
+
+config
+    .command('test <engine>')
+    .description('Test a custom engine end to end: upload a tiny placeholder image, read it back, report the result. Spends a negligible amount of quota.')
+    .option('--model <name>', 'Model to test (default: the engine model)')
+    .option('--timeout <ms>', 'Provider timeout in milliseconds', '180000')
+    .action(async (engine, options) => {
+        let tempPath = null;
+        try {
+            const timeoutMs = parsePositiveInt(options.timeout, '--timeout (milliseconds)');
+            const config = loadConfigFile();
+            const customs = readCustomProviders(config);
+            const id = canonicalizeName(engine);
+            if (!Object.hasOwn(customs, id)) {
+                throw new Error(`自定义引擎「${id}」不存在。运行 visionforge config list-custom 查看现有引擎。`);
+            }
+            tempPath = path.join(process.cwd(), `.visionforge-test-${Date.now()}.png`);
+            fs.writeFileSync(tempPath, tinyPlaceholderPng());
+            const startedAt = Date.now();
+            const result = await analyzeImage({
+                input: tempPath,
+                provider: id,
+                model: options.model,
+                config,
+                cooldown: buildCooldownController(config),
+                timeoutMs,
+            });
+            process.stdout.write(
+                `${JSON.stringify(
+                    {
+                        ok: true,
+                        engine: id,
+                        provider: result.provider,
+                        model: result.meta.model,
+                        durationSeconds: result.meta.durationSeconds,
+                        summary: result.result.summary?.slice(0, 200) ?? '',
+                        usage: result.meta.usage ?? null,
+                        elapsedMs: Date.now() - startedAt,
+                    },
+                    null,
+                    2,
+                )}\n`,
+            );
+        } catch (error) {
+            process.stderr.write(`Error: ${error instanceof Error ? error.message : String(error)}\n`);
+            process.exitCode = 1;
+        } finally {
+            if (tempPath) {
+                try {
+                    fs.unlinkSync(tempPath);
+                } catch {
+                }
+            }
         }
     });
 
