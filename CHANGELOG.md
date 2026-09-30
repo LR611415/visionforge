@@ -4,6 +4,17 @@ All notable changes to `@lr611/visionforge` are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions; versioning is
 SemVer (with `-rc` prereleases for the harness this plugin targets).
 
+## [0.1.11] — 2026-09-30
+
+### Changed
+- **peerDependencies 上限放宽至 `<0.3.0-0`**（`@deepseek-ai/dsh-client-ui-primitives`）：
+  适配 DSH harness 0.2.x。0.2.0 起插件激活机制改为 installReceipt（安装收据）驱动——
+  收据决定 bundle patch 挂载（工具注册 + webServer 路由）。此前 0.1.10 在 0.2.0 上
+  需授予版本豁免，而豁免路径**不写收据**，导致包装上了、设置卡片/预览/下载正常，
+  但工具未注册、粘贴接管路由 404（宿主提示「当前模型不支持图片」）。放宽 peer 声明后
+  0.2.x 走正常安装路径，收据写入、bundle 正常挂载。0.1.x 用户不受影响（范围仍是
+  `<0.1.0` 与 `<0.2.0-0` 的并集超集）。
+
 ## [0.1.10] — 2026-09-30
 
 ### Added
