@@ -6,6 +6,16 @@ VisionForge is a deep rework of the open-source vision plugin [liustack/modlens]
 
 > **Supported environment**: DSH Desktop **v2.0.14** / DSH harness **0.1.7-rc.2** (verified 2026-09). DSH major releases may change plugin interfaces — re-verify after an upgrade.
 
+### Plugin version × DSH harness matrix
+
+| Plugin | Released | DSH harness | DSH Desktop | Notes |
+| --- | --- | --- | --- | --- |
+| 0.1.8 and earlier | ≤ 2026-09-27 | harness 0.1.x early | — | Fork/bridge of liustack/modlens 3.26.3 (branding + initial integration) |
+| 0.1.9 | 2026-09-28 | harness 0.1.7-rc.1 | — | First rewritten connection layer (~90% original, upstream credit kept); feature baseline |
+| **0.1.10** (current) | 2026-09-30 | harness 0.1.7 series (-rc.1 / -rc.2) | v2.0.14 (verified 2026-09) | Enhanced 0.1.9: compliance docs, settings card, marketplace prep |
+
+> Install-level compatibility (npm `peerDependencies`): `@deepseek-ai/dsh-client-ui-primitives` allows `>=0.1.0-rc.1 <0.2.0-0` (any 0.1.x harness installs); the table lists verified versions. **harness 0.2.x and above are out of scope**.
+
 ---
 
 ## Feature overview

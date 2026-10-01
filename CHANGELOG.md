@@ -4,6 +4,16 @@ All notable changes to `@lr611/visionforge` are documented here. The format foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions; versioning is
 SemVer (with `-rc` prereleases for the harness this plugin targets).
 
+## 版本与 DSH harness 适配矩阵
+
+| 插件版本 | 发布日 | 适配 DSH harness | 适配 DSH Desktop | 说明 |
+| --- | --- | --- | --- | --- |
+| 0.1.8 及更早 | ≤ 2026-09-27 | harness 0.1.x 早期 | — | 基于 liustack/modlens 3.26.3 的分叉/桥接版（品牌化 + 初步集成） |
+| 0.1.9 | 2026-09-28 | harness 0.1.7-rc.1 | — | 连接层重写第一版（约 90% 自研，保留上游致谢），功能基线 |
+| 0.1.10（当前） | 2026-09-30 | harness 0.1.7 系列（-rc.1 / -rc.2） | v2.0.14（2026-09 实测） | 0.1.9 增强版：内容合规、设置卡片、上架准备 |
+
+安装层面（npm `peerDependencies`）：`@deepseek-ai/dsh-client-ui-primitives` 允许 `>=0.1.0-rc.1 <0.2.0-0`（即 harness 0.1.x 系列均可安装），上表为实测版本。**harness 0.2.x 及以上不在适配范围**。
+
 ## [0.1.10] — 2026-09-30
 
 ### Added
