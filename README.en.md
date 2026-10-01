@@ -2,9 +2,9 @@
 
 **Give DeepSeek Harness "eyes" and a "brush": vision understanding + image generation + image editing, all in one plugin.**
 
-VisionForge is a deep rework of the open-source vision plugin [liustack/modlens](https://github.com/liustack/modlens) (MIT): it adds the Qwen engine, image generation and editing, an in-app settings card, and an official/plugin dual parse-priority dispatcher. It keeps the upstream's lightweight architecture — on DSH it is just a plugin directory; removing it deletes everything, no official DSH component is modified, and native functionality is untouched. **Versions ≤ 0.1.8 were a bridge on top of the modlens fork; since 0.1.9 the connection layer was rewritten as an independent implementation (upstream credit and architecture inspiration retained).**
+VisionForge is a deep rework of the open-source vision plugin [liustack/modlens](https://github.com/liustack/modlens) (MIT): it adds the Qwen engine, image generation and editing, an in-app settings card, and an official/plugin dual parse-priority dispatcher. It keeps the upstream's lightweight architecture — on DSH it is just a plugin directory; removing it deletes everything, no official DSH component is modified, and native functionality is untouched.
 
-> **Supported environment**: current version (0.1.11 / 0.2.1) targets DSH harness **0.2.x** (verified on 0.2.0-rc.2); 0.1.10 targets harness **0.1.7 series**. The full version↔harness compatibility matrix lives in [CHANGELOG.md](CHANGELOG.md) ("版本与 DSH harness 适配矩阵"). DSH major releases may change plugin interfaces — re-verify after an upgrade.
+> **Supported environment**: DSH Desktop **v2.0.14** / DSH harness **0.1.7-rc.2** (verified 2026-09). DSH major releases may change plugin interfaces — re-verify after an upgrade.
 
 ---
 

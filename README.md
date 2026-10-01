@@ -4,9 +4,9 @@
 
 > 🌐 [English](README.en.md) | 中文
 
-VisionForge 基于开源视觉插件 [liustack/modlens](https://github.com/liustack/modlens)（MIT）深度改造而来：接入千问（Qwen）引擎、新增图片生成与编辑能力、内置图形化设置卡片、支持官方 / 插件双解析优先级调度。改造点全部保留原插件的轻量架构——在 DSH 上只是一个插件目录，卸载即删除，不修改任何 DSH 官方组件，不影响原生功能。**0.1.8 及更早版本为 modlens 分叉基础上的桥接版；0.1.9 起连接层重写为自研实现（保留上游致谢与架构启发）。**
+VisionForge 基于开源视觉插件 [liustack/modlens](https://github.com/liustack/modlens)（MIT）深度改造而来：接入千问（Qwen）引擎、新增图片生成与编辑能力、内置图形化设置卡片、支持官方 / 插件双解析优先级调度。改造点全部保留原插件的轻量架构——在 DSH 上只是一个插件目录，卸载即删除，不修改任何 DSH 官方组件，不影响原生功能。
 
-> **适配环境**：当前版本（0.1.11 / 0.2.1）适配 DSH harness **0.2.x**（0.2.0-rc.2 实测）；0.1.10 适配 harness **0.1.7 系列**。各版本与 harness 的完整适配矩阵见 [CHANGELOG.md](CHANGELOG.md)「版本与 DSH harness 适配矩阵」。DSH 大版本更新可能改变插件接口，升级后请重新验证。
+> **适配环境**：DSH Desktop **v2.0.14** / DSH harness **0.1.7-rc.2**（2026-09 实测）。DSH 大版本更新可能改变插件接口，升级后请重新验证。
 
 ---
 
