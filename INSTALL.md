@@ -29,6 +29,12 @@ tell the user that.
 > (verified 2026-10; harness 0.1.7 series also compatible). Newer major releases
 > may change plugin interfaces; if a
 > step fails in a way this document does not cover, report the exact error text.
+>
+> **Desktop edition note**: the plugin only depends on the **harness** version —
+> official and third-party desktop builds behave identically as long as the
+> harness version matches (tool registration, preview/zoom/download all work the
+> same). The official DSH Desktop is still recommended; third-party builds are
+> not supported upstream.
 
 ---
 
@@ -98,6 +104,39 @@ Copy-Item -Force "$src\package.json" "$dst\package.json"
 model selector: entries suffixed `(modlens vision)` mean the plugin is live.
 Pasting images also works on plain text-only entries (the image becomes a local
 path). Go to Step 2 for the engine, then Step 3 to verify.
+
+---
+
+## Step 1.5: installing a historical version (optional)
+
+The npm route (Path A) accepts an explicit version — **no archive download
+needed**:
+
+```powershell
+npx -y @deepseek-ai/dsh plugin --profile <profile> add @lr611/visionforge@0.1.10   # v0.1.9 / v0.1.8 likewise
+```
+
+Switch back to the latest with `add @lr611/visionforge@0.2.1`.
+
+Offline / source-snapshot route: download the tag archive (Releases → Assets, or
+this direct link; change the tag name for other versions) and overwrite the
+installed package:
+
+```text
+https://github.com/LR611415/visionforge/archive/refs/tags/v0.1.10.zip
+```
+
+1. Unzip → folder `visionforge-0.1.10/`
+2. If the plugin was never declared for this profile, run once:
+   `npx -y @deepseek-ai/dsh plugin --profile <profile> add @lr611/visionforge`
+3. Overwrite `~/.dsh/profiles/<profile>/node_modules/@lr611/visionforge/` with
+   the unzipped **contents** (back up the current directory first)
+4. **Fully restart dsh**
+
+**Compatibility gate**: each historical plugin version matches a specific
+harness series (see the version matrix in README / CHANGELOG). Installing
+v0.1.10 on harness 0.2.x fails peerDependencies validation — downgrade the
+desktop / harness to the matching series first, exactly as the matrix says.
 
 ---
 

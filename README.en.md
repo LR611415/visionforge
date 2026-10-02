@@ -5,6 +5,8 @@
 VisionForge is a deep rework of the open-source vision plugin [liustack/modlens](https://github.com/liustack/modlens) (MIT): it adds the Qwen engine, image generation and editing, an in-app settings card, and an official/plugin dual parse-priority dispatcher. It keeps the upstream's lightweight architecture — on DSH it is just a plugin directory; removing it deletes everything, no official DSH component is modified, and native functionality is untouched.
 
 > **Supported environment**: DSH Desktop **v2.0.17** / DSH harness **0.2.0-rc.2** (verified 2026-10). DSH major releases may change plugin interfaces — re-verify after an upgrade.
+>
+> **Desktop edition note**: the plugin only depends on the **harness** version — official and third-party desktop builds behave identically as long as the harness version matches (tool registration, preview/zoom/download all work the same). The official DSH Desktop is still recommended; third-party builds are not supported upstream.
 
 ### Plugin version × DSH harness matrix
 
@@ -60,6 +62,37 @@ The AI follows `INSTALL.md`: one-command npm install (or local-copy fallback) �
 ### Option 3: local source copy fallback (offline / pre-publish)
 
 See Path B in the repo's `INSTALL.md`: copy `dsh/`, `src/`, `skills/`, `cordis.patch.yml`, `package.json` into the DSH plugin directory and run `npm install`.
+
+### Historical versions: download & install
+
+The current version is **0.2.1**. To go back to an older version (e.g. v0.1.10 for harness 0.1.7 series), use either route:
+
+**A. No archive download (recommended) — install an explicit version via the DSH CLI**
+
+1. Check your profile name first (usually `desktop`):
+   ```powershell
+   Get-ChildItem "$env:USERPROFILE\.dsh\profiles" -Directory | Select-Object -ExpandProperty Name
+   ```
+2. Install the pinned version (replace `<profile>` with what you found):
+   ```powershell
+   npx -y @deepseek-ai/dsh plugin --profile desktop add @lr611/visionforge@0.1.10
+   npx -y @deepseek-ai/dsh plugin --profile desktop add @lr611/visionforge@0.1.9
+   npx -y @deepseek-ai/dsh plugin --profile desktop add @lr611/visionforge@0.1.8
+   ```
+3. **Fully exit and restart DSH**. Switch back to latest: `add @lr611/visionforge@0.2.1`.
+
+**B. Archive install (offline / source snapshot)**
+
+1. Download the source archive (GitHub **Releases → Assets**, or direct link; change the tag name for v0.1.9 / v0.1.8):
+   ```
+   https://github.com/LR611415/visionforge/archive/refs/tags/v0.1.10.zip
+   ```
+2. Unzip → folder `visionforge-0.1.10/`
+3. If the plugin was never declared for the profile, run once: `npx -y @deepseek-ai/dsh plugin --profile desktop add @lr611/visionforge`
+4. Overwrite `%USERPROFILE%\.dsh\profiles\desktop\node_modules\@lr611\visionforge\` with the unzipped **contents** (back up the current directory first)
+5. Fully exit and restart DSH
+
+> ⚠️ **A historical version must match its harness**: see the "Plugin version × DSH harness matrix" above. Installing v0.1.10 on harness 0.2.0-rc.2 fails peerDependencies validation — downgrade the desktop / harness to the matching series first.
 
 ## Quick start
 

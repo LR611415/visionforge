@@ -7,6 +7,8 @@
 VisionForge 基于开源视觉插件 [liustack/modlens](https://github.com/liustack/modlens)（MIT）深度改造而来：接入千问（Qwen）引擎、新增图片生成与编辑能力、内置图形化设置卡片、支持官方 / 插件双解析优先级调度。改造点全部保留原插件的轻量架构——在 DSH 上只是一个插件目录，卸载即删除，不修改任何 DSH 官方组件，不影响原生功能。
 
 > **适配环境**：DSH Desktop **v2.0.17** / DSH harness **0.2.0-rc.2**（2026-10 实测）。DSH 大版本更新可能改变插件接口，升级后请重新验证。
+>
+> **桌面端说明**：插件只与 **harness 版本**相关——官方桌面端与第三方桌面端只要 harness 版本相同，对插件功能无实质差异（工具注册、图片预览 / 放大 / 下载等行为一致）；但**推荐使用官方 DSH Desktop**，第三方桌面端不受上游官方支持。
 
 ### 插件版本 × DSH harness 对照
 
@@ -63,6 +65,38 @@ AI 会按 `INSTALL.md` 的步骤执行：npm 一键安装（或本地复制兜�
 ### 方式三：本地源码复制兜底（离线 / 未发布场景）
 
 见仓库 `INSTALL.md` 的 Path B：把 `dsh/`、`src/`、`skills/`、`cordis.patch.yml`、`package.json` 复制到 DSH 插件安装目录并 `npm install`。
+
+### 历史版本：下载与安装
+
+当前版本为 **0.2.1**。需要回到旧版本（如 v0.1.10 适配 harness 0.1.7 系列）时，两种方式任选：
+
+**A. 免下载压缩包（推荐）——DSH CLI 直接指定版本安装**
+
+1. 先确认 profile 名（一般为 `desktop`）：
+   ```powershell
+   Get-ChildItem "$env:USERPROFILE\.dsh\profiles" -Directory | Select-Object -ExpandProperty Name
+   ```
+2. 指定版本安装（`<profile>` 换成上一步查到的名字）：
+   ```powershell
+   npx -y @deepseek-ai/dsh plugin --profile desktop add @lr611/visionforge@0.1.10
+   npx -y @deepseek-ai/dsh plugin --profile desktop add @lr611/visionforge@0.1.9
+   npx -y @deepseek-ai/dsh plugin --profile desktop add @lr611/visionforge@0.1.8
+   ```
+3. **完全退出并重启 DSH**。切回最新版：`add @lr611/visionforge@0.2.1`。
+
+**B. 压缩包手动安装（离线 / 想要源码快照）**
+
+1. 下载源码压缩包（GitHub **Releases → Assets**，或直接链接，v0.1.9 / v0.1.8 同理换 tag 名）：
+   ```
+   https://github.com/LR611415/visionforge/archive/refs/tags/v0.1.10.zip
+   ```
+2. 解压得到 `visionforge-0.1.10/` 文件夹
+3. 若插件未在 DSH 声明过，先执行一次 `npx -y @deepseek-ai/dsh plugin --profile desktop add @lr611/visionforge`
+4. 把解压文件夹**里面的内容**整体覆盖到（先备份原目录）：
+   `%USERPROFILE%\.dsh\profiles\desktop\node_modules\@lr611\visionforge\`
+5. 完全退出并重启 DSH
+
+> ⚠️ **历史版本必须与 harness 匹配**：见上文「插件版本 × DSH harness 对照」表。在 harness 0.2.0-rc.2 上直接装 v0.1.10 会因 peerDependencies 不兼容而加载失败——跑历史版本前，先把桌面端 / harness 退回对照表对应版本。
 
 ## 快速开始
 
