@@ -34,10 +34,11 @@ jobs:
         run: npm test
 
       - name: Verify package manifest (dsh bundle + peerDependencies)
-        run: node -e "
+        run: |
+          node -e "
           const j = require('./package.json');
           if (!j.dsh?.bundle?.patch) throw new Error('missing dsh.bundle.patch');
           if (!j.peerDependencies?.['@deepseek-ai/dsh-client-ui-primitives']) throw new Error('missing peerDependencies for dsh-client-ui-primitives');
           if (!j.repository?.url?.includes('github.com/LR611415/visionforge')) throw new Error('repository must point to GitHub repo');
           console.log('manifest OK');
-        "
+          "
