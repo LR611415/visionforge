@@ -360,8 +360,8 @@ test('enhanceEditPrompt: 短提示词 → 返回 notice 提醒宿主，且不代
   assert.ok(r.prompt.includes('画面约束'), '仍追加保护性边界约束');
 });
 
-test('enhanceEditPrompt: 用户已写足 50 字细节 → 无 notice', () => {
-  const r = enhanceEditPrompt('让图片中的男生和女生互相拥抱。两人站在黄昏的海边沙滩上，男生穿着白色T恤，女生穿着浅蓝色连衣裙，海风吹动发丝，夕阳暖光从侧面照来，构图采用中景，画质高清写实、光影层次分明', { mode: 'generate' });
+test('enhanceEditPrompt: 用户已写足 100 字细节 → 无 notice', () => {
+  const r = enhanceEditPrompt('让图片中的男生和女生互相拥抱。两人站在黄昏的海边沙滩上，男生穿着白色棉质T恤和浅蓝色牛仔裤，女生穿着浅蓝色雪纺连衣裙，海风吹动发丝，夕阳暖光从侧面45度斜射、柔光金调，远景构图、背景海面虚化，高清写实、光影层次分明、人物表情自然', { mode: 'generate' });
   assert.ok(!r.notice, '宿主已写足细节 → 不提醒');
   assert.ok(r.prompt.includes('画面约束'), '边界约束仍保留');
 });
@@ -377,14 +377,14 @@ test('enhanceEditPrompt: 文生图模式（generate）→ 跳过以原图为基�
   assert.ok(!r.prompt.includes('细节描写：'), '不代写细节');
 });
 
-test('enhanceEditPrompt: 文生图模式——用户已写足细节时无 notice', () => {
-  const r = enhanceEditPrompt('8K 超清画质，电影级光影层次，海边日落，沙滩上一位穿白色连衣裙的长发女生在奔跑，海风吹动裙摆，远景构图，画面通透、细节层次丰富', { mode: 'generate' });
-  assert.ok(!r.notice, '用户已写足 50 字细节 → 无 notice');
+test('enhanceEditPrompt: 文生图模式——用户已写足 100 字细节时无 notice', () => {
+  const r = enhanceEditPrompt('8K 超清画质，电影级光影层次，海边日落，沙滩上一位穿白色雪纺连衣裙的长发女生在奔跑，裙摆被风吹起、发丝飞扬，夕阳从左侧逆光勾勒出金色轮廓光，远景构图、背景海面与天空层次分明，画面通透、细节纹理清晰、颗粒感真实', { mode: 'generate' });
+  assert.ok(!r.notice, '用户已写足 100 字细节 → 无 notice');
   assert.ok(r.prompt.includes('画面约束'), '边界约束保留');
 });
 
 test('enhanceEditPrompt: 编辑模式——细节充足则无 notice，仅追加边界约束', () => {
-  const r = enhanceEditPrompt('保持两人的发型、身材、服饰和人数完全不变，面部五官特征不变，表情自然生动，构图视角与光影保持原图，不做任何裁切或重绘');
+  const r = enhanceEditPrompt('保持两人的发型、身材、服饰和人数完全不变，面部五官特征、肤色与表情自然生动，构图视角与光影完全保持原图，不做任何裁切或重绘；场景仍为海边两块深色岩石之间、鹅卵石海滩，阴天柔和漫射光，高清写实、服装面料纹理清晰、光影自然');
   assert.ok(!r.notice, '细节充足且无姿态场景词 → 无 notice');
   assert.ok(r.enhanced, '仍追加默认边界约束（身份保持等）');
 });
@@ -416,7 +416,7 @@ test('enhanceEditPrompt: generate 模式 notice 走文生图文案（无原图�
   assert.ok(r.notice.includes('主体特征与状态'), '列出六维清单');
 });
 
-test('enhanceEditPrompt: 六维全覆盖且 ≥50 字 → 无 notice（generate）', () => {
-  const r = enhanceEditPrompt('清晨大学校园林荫道，一位穿白色短袖衬衫和蓝色牛仔裤的男生骑着自行车缓慢前行，车轮转动，阳光从树叶缝隙洒下形成光斑，中景构图，高清写实、细节丰富', { mode: 'generate' });
+test('enhanceEditPrompt: 六维全覆盖且 ≥100 字 → 无 notice（generate）', () => {
+  const r = enhanceEditPrompt('清晨大学校园林荫道，一位穿白色棉质短袖衬衫和浅蓝色直筒牛仔裤的男生骑着自行车缓慢前行，车轮转动、双脚踩在脚蹬上前低后高，阳光从树叶缝隙洒下形成斑驳光斑，晨光从左侧斜射、柔光暖调，中景构图、背景林荫虚化，高清写实、细节丰富、光影层次分明', { mode: 'generate' });
   assert.ok(!r.notice, '六维齐全且足长 → 不提醒');
 });
