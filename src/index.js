@@ -37,7 +37,7 @@ import {
 } from './config.js';
 import { parseExtraBody } from './util.js';
 
-const VERSION = '0.1.9';
+const VERSION = '0.2.1';
 
 function parsePositiveInt(raw, flag) {
     if (!/^\d+$/.test(raw.trim()) || Number.parseInt(raw, 10) <= 0) {
@@ -91,6 +91,29 @@ async function readSecret(promptText, stdin = process.stdin, stderr = process.st
 }
 
 const program = new Command();
+
+// DSH harness guard: inside DSH the agent must go through the registered tools
+// (visionforge_read_image / generate_image / edit_image) so results render with
+// previewMarkdown (thumbnail + zoom + save button). The image-facing CLI commands
+// (analyze/generate/edit) are therefore blocked here; terminal users can opt out
+// with VISIONFORGE_ALLOW_CLI=1.
+function assertNotDsh(env = process.env) {
+    // Tool-internal CLI calls (dsh/index.js runCli) always pass via this marker.
+    if (env.VISIONFORGE_INTERNAL === '1') return;
+    const inDsh =
+        !!env.DSH_HOME ||
+        !!env.DSH_DESKTOP_DEFAULT_PROFILE ||
+        !!env.DSH_RUNTIME_EXIT ||
+        (env.HOME && fs.existsSync(path.join(env.HOME, '.dsh'))) ||
+        (env.USERPROFILE && fs.existsSync(path.join(env.USERPROFILE, '.dsh')));
+    if (inDsh && env.VISIONFORGE_ALLOW_CLI !== '1') {
+        console.error(
+            '[visionforge] DSH 对话内请使用注册工具：visionforge_read_image / visionforge_generate_image / visionforge_edit_image（工具会返回 previewMarkdown：缩略图可点击放大 + 保存按钮）。CLI 读图/生图/编辑仅供终端直接使用。'
+        );
+        process.exit(7);
+    }
+}
+
 program.name('visionforge').description('Plug-in vision for text-only LLMs: image in, structured JSON evidence out').version(VERSION);
 
 program
@@ -106,6 +129,7 @@ program
     .option('--workdir <path>', 'Working directory for the provider')
     .option('--extra-body <json>', `JSON merged into the API request body, e.g. '{"thinking":{"type":"disabled"}}'`)
     .action(async (options) => {
+        assertNotDsh();
         try {
             const timeoutMs = parsePositiveInt(options.timeout, '--timeout (milliseconds)');
             const config = loadConfigFile();
@@ -157,6 +181,7 @@ program
     .option('--provider <name>', 'Alias of --engine')
     .option('--timeout <ms>', 'Provider timeout in milliseconds', '120000')
     .action(async (options) => {
+        assertNotDsh();
         try {
             const timeoutMs = parsePositiveInt(options.timeout, '--timeout (milliseconds)');
             const result = await generateImage({
@@ -189,6 +214,7 @@ program
     .option('--no-enhance', 'Disable automatic edit-prompt enhancement (protective constraints)')
     .option('--timeout <ms>', 'Provider timeout in milliseconds', '120000')
     .action(async (options) => {
+        assertNotDsh();
         try {
             const timeoutMs = parsePositiveInt(options.timeout, '--timeout (milliseconds)');
             const count = parsePositiveInt(options.count, '--count');

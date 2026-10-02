@@ -310,12 +310,274 @@ window.__ModuleLoader__.load({
 
     function injectPreviewStyles() {
       try {
-        var style = document.createElement('style')
-        style.setAttribute('data-vf-styles', '1')
-        style.textContent =
-          'img[src*="/visionforge/image"]{max-width:90px!important;max-height:90px!important;' +
-          'cursor:zoom-in;border-radius:6px;object-fit:cover;vertical-align:middle}'
-        ;(document.head || document.documentElement).appendChild(style)
+        // CSS 强化：宿主重渲染/清理可能移除我们的 <style>（表现为"重启后 5s 图片消失"），
+        // 这里用 MutationObserver + 兜底轮询保证 style 常驻、拆出/补字即时生效。
+        function ensureStyle() {
+          var el = document.querySelector('[data-vf-styles]')
+          if (el) return
+          el = document.createElement('style')
+          el.setAttribute('data-vf-styles', '1')
+          el.textContent =
+            'img[src*="/visionforge/image"]{display:inline-block!important;visibility:visible!important;' +
+            'max-width:160px!important;max-height:160px!important;' +
+            'cursor:zoom-in;border-radius:6px;object-fit:cover;vertical-align:middle;' +
+            'margin:0 0.75em 0.75em 0}' +
+            // 保存/下载链接：蓝色文字样式（无背景、无边框、字号与正文一致）。
+            'a[href*="/visionforge/save-local"],a[href*="/visionforge/download"],a[href*="/visionforge/download-local"]{' +
+            'color:#1677ff!important;text-decoration:underline;margin:0;' +
+            'padding:0;background:transparent;border:none;font-size:inherit;line-height:inherit;cursor:pointer}' +
+            // 图右紧跟按钮的间距（正文行间距 0.75em）；img 为 inline-block，多图在 markdown 行内自然横向并排。
+            'img[src*="/visionforge/image"] + a[href*="/visionforge/save-local"],' +
+            'img[src*="/visionforge/image"] + a[href*="/visionforge/download"],' +
+            'img[src*="/visionforge/image"] + a[href*="/visionforge/download-local"]{' +
+            'margin-left:0.75em}'
+          ;(document.head || document.documentElement).appendChild(el)
+        }
+        ensureStyle()
+
+        function splitSaveLinks() {
+          // 寄生虫式强制显示：宿主可能折叠/隐藏 /visionforge/image 图片（display:none 等），
+          // 每次轮询/观察都强制回写 inline 样式，保证 harness 在、预览就在。
+          document.querySelectorAll('img[src*="/visionforge/image"]').forEach(function (img) {
+            img.style.display = 'inline-block'
+            img.style.visibility = 'visible'
+            img.style.maxWidth = '160px'
+            img.style.maxHeight = '160px'
+            img.style.cursor = 'zoom-in'
+            img.style.borderRadius = '6px'
+            img.style.objectFit = 'cover'
+            img.style.verticalAlign = 'middle'
+            img.style.margin = '0 0.75em 0.75em 0'
+            // 重启/时序导致的历史图加载失败（插件服务端延迟就绪）→ 有限重试，
+            // 服务端就绪后重新请求即可显示；最多 3 次，避免无限刷新。
+            if (img.complete && img.naturalWidth === 0) {
+              var retry = parseInt(img.getAttribute('data-vf-retry') || '0', 10)
+              if (retry < 3) {
+                img.setAttribute('data-vf-retry', String(retry + 1))
+                var src = img.getAttribute('src') || ''
+                if (src.indexOf('vf-retry=') === -1) {
+                  img.src = src + (src.indexOf('?') === -1 ? '?' : '&') + 'vf-retry=' + (retry + 1)
+                }
+              }
+            }
+          })
+          // 寄生虫式自渲染：宿主可能把图片链接渲染成纯文本 <a>（无 img 节点），
+          // 插件自己注入预览图 —— harness 在，预览就在。
+          document.querySelectorAll('a[href*="/visionforge/image"]').forEach(function (a) {
+            if (a.__vfInjected || a.querySelector('img[src*="/visionforge/image"]')) return
+            var href = a.getAttribute('href') || ''
+            if (!/visionforge\/image/.test(href)) return
+            var img = document.createElement('img')
+            img.src = href
+            img.alt = 'VisionForge 生成图'
+            img.style.cssText = 'display:block;visibility:visible;max-width:160px;max-height:160px;cursor:zoom-in;border-radius:6px;object-fit:cover;vertical-align:middle;margin:0 0 0.75em 0'
+            a.__vfInjected = true
+            a.parentNode.insertBefore(img, a)
+          })
+          document.querySelectorAll('a[href*="save-local"],a[href*="download-local"],a[href*="/visionforge/download"]').forEach(function (a) {
+            // 不移动任何 DOM：宿主把图包进保存链接时（a 内 img）保持原样，点击图片
+            // 由图片监听（capture + stopImmediatePropagation）拦截放大、不会触发下载。
+            if (!(a.textContent || '').trim() && !a.querySelector('img')) {
+              a.textContent = a.getAttribute('href') || ''
+              if (/save-local/.test(a.textContent)) a.textContent = '保存图片'
+            }
+          })
+          // arrangeVFGrid() 已停用：卡片化需要移动 img 节点（appendChild 换父容器），
+          // 与 DSH 重启后历史消息恢复的组件渲染冲突（图被还原/清理 → 历史图消失）。
+          // 多图并排改由 CSS inline-block 实现（回归副本的纯 CSS 方案：img 在 markdown
+          // 行内自然横向排列，按钮蓝色文字跟随，不移动任何 DOM 节点）。
+          ensureSaveLinks()
+          parsePreviewText()
+          hideOrphanLinks()
+          reportDiagnostics()
+        }
+
+        // 孤儿保存按钮清理：markdown 渲染的 [保存图片 N] 链接若前一个兄弟元素不是图片
+        //（图被 parsePreviewText 注入到别处、或链接与图分离），视为孤儿隐藏（display:none，
+        // 不删除，React 重建安全）。正常配对（img 与 a 相邻）与插件注入的（data-vf-inline）不动。
+        function hideOrphanLinks() {
+          try {
+            document.querySelectorAll('a[href*="save-local"],a[href*="download-local"],a[href*="/visionforge/download"]').forEach(function (a) {
+              if (a.getAttribute('data-vf-inline')) return
+              // 宿主把图包进保存链接（a 内 img）——图随按钮走，不算孤儿。
+              if (a.querySelector('img[src*="/visionforge/image"]')) return
+              var prev = a.previousElementSibling
+              if (prev && prev.tagName === 'IMG' && /visionforge\/image/.test(prev.getAttribute('src') || '')) return
+              a.style.display = 'none'
+            })
+          } catch (err) { /* best-effort */ }
+        }
+
+        // 诊断上报：把 DOM 层的匹配情况发给服务端（写 server.log），
+        // 用于排查"重启后历史消息不渲染"等 DOM 盲区问题。节流 5s 一次。
+        function reportDiagnostics() {
+          try {
+            var now = Date.now()
+            if (window.__vfLastDiag && now - window.__vfLastDiag < 5000) return
+            window.__vfLastDiag = now
+            var imgCount = document.querySelectorAll('img[src*="/visionforge/image"]').length
+            var linkCount = document.querySelectorAll('a[href*="save-local"],a[href*="download-local"]').length
+            var textHit = 0
+            var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null)
+            var n
+            var re = /!\[生成图\s*\d+\]\([^)]+\)/
+            while ((n = walker.nextNode())) {
+              re.lastIndex = 0
+              if (re.test(n.nodeValue || '')) textHit++
+            }
+            var origin = ''
+            var firstImg = document.querySelector('img[src*="/visionforge/image"]')
+            if (firstImg) { try { origin = new URL(firstImg.getAttribute('src')).origin } catch (e) {} }
+            if (!origin) return
+            var msg = 'imgs=' + imgCount + ' links=' + linkCount + ' textHit=' + textHit
+            fetch(origin + '/visionforge/log?msg=' + encodeURIComponent(msg), { method: 'GET' }).catch(function () {})
+          } catch (err) { /* best-effort */ }
+        }
+
+        // 图集卡片：把每对"生成图 + 保存链接"包成卡片，卡片横向并排（flex）。
+        // 多张图时不再垂直堆叠——图1 图2 图3 一行，各自的保存按钮在各自图下方。
+        function arrangeVFGrid() {
+          try {
+            if (document.querySelectorAll('img[src*="/visionforge/image"]').length === 0) return
+            var imgs = []
+            document.querySelectorAll('img[src*="/visionforge/image"]').forEach(function (img) {
+              if (img.__vfCard || img.getAttribute('data-vf-inline')) return
+              imgs.push(img)
+            })
+            var links = []
+            document.querySelectorAll('a[href*="save-local"],a[href*="download-local"],a[href*="/visionforge/download"]').forEach(function (a) {
+              if (a.__vfCard || a.getAttribute('data-vf-inline')) return
+              links.push(a)
+            })
+            if (imgs.length === 0) return
+            var host = imgs[0].parentNode
+            if (!host) return
+            var refNode = imgs[0].nextSibling  // 记录原位置（图会被移入卡片，之后按此插入卡片网格）
+            var grid = document.createElement('div')
+            grid.setAttribute('data-vf-grid', '1')
+            grid.style.cssText = 'display:flex;flex-wrap:wrap;gap:1em;align-items:flex-start;margin:0 0 0.5em 0'
+            for (var i = 0; i < imgs.length; i++) {
+              var card = document.createElement('div')
+              card.style.cssText = 'display:flex;flex-direction:column;align-items:flex-start'
+              imgs[i].__vfCard = true
+              if (links[i]) links[i].__vfCard = true
+              card.appendChild(imgs[i])
+              if (links[i]) card.appendChild(links[i])
+              grid.appendChild(card)
+            }
+            // 多余的保存链接（没有对应图片的孤立链接）隐藏，避免错位残留
+            for (var j = imgs.length; j < links.length; j++) {
+              links[j].style.display = 'none'
+            }
+            if (refNode && refNode.parentNode === host) {
+              host.insertBefore(grid, refNode)
+            } else {
+              host.appendChild(grid)
+            }
+          } catch (err) { /* arrange is best-effort */ }
+        }
+        // 宿主只渲染了生成图（img）但没渲染保存链接时，补一个保存按钮（推导 save-local URL）。
+        function ensureSaveLinks() {
+          try {
+            document.querySelectorAll('img[src*="/visionforge/image"]').forEach(function (img) {
+              if (img.getAttribute('data-vf-inline') || img.getAttribute('data-vf-save-added')) return
+              var parent = img.parentNode
+              if (!parent) return
+              // 已有"非插件补的"保存链接（markdown 渲染的 a）→ 不补；
+              // 插件自己补过的用 img 侧标记跳过（多图同父时不会只给第一张补）。
+              if (parent.querySelector('a[href*="save-local"]:not([data-vf-save-added])')) return
+              var saveUrl = (img.getAttribute('src') || '').replace(/\/image\?/, '/save-local?')
+              var a = document.createElement('a')
+              a.href = saveUrl
+              a.textContent = '保存图片'
+              a.setAttribute('data-vf-inline', '1')
+              a.setAttribute('data-vf-save-added', '1')
+              a.style.cssText = 'color:#1677ff!important;text-decoration:underline;margin:0;padding:0;background:transparent;border:none;font-size:inherit;line-height:inherit;cursor:pointer'
+              img.setAttribute('data-vf-save-added', '1')
+              parent.appendChild(a)
+            })
+          } catch (err) { /* best-effort */ }
+        }
+        // 文本解析自渲染（终极兜底）：宿主把 previewMarkdown 显示成纯文本时
+        //（工具调用面板的原始输出 / 消息正文未渲染 markdown），插件直接从
+        // 文本节点解析 ![生成图 N](URL) 与 [保存图片 N](URL)，在文本旁注入
+        // 缩略图 + 保存按钮（img 在上、按钮在下，间距 0.75em；多图横向并排）。
+        // 注入元素带 data-vf-inline 标记，arrangeVFGrid 跳过，避免重复包裹。
+        function parsePreviewText() {
+          try {
+            var re = /!\[生成图\s*(\d+)\]\(([^)]+)\)/g
+            var pending = []
+            var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null)
+            var node
+            while ((node = walker.nextNode())) {
+              if (node.__vfParsed) continue
+              var txt = node.nodeValue || ''
+              if (txt.indexOf('![') === -1) continue
+              re.lastIndex = 0
+              if (re.test(txt)) pending.push(node)
+            }
+            pending.forEach(function (tn) {
+              tn.__vfParsed = true
+              re.lastIndex = 0
+              var m
+              while ((m = re.exec(tn.nodeValue)) !== null) {
+                var imgUrl = (m[2] || '').trim()
+                if (!/visionforge\/image/.test(imgUrl)) continue
+                var saveRe = new RegExp('\\[保存图片\\s*' + m[1] + '\\]\\(([^)]*)\\)')
+                var sm = tn.nodeValue.match(saveRe)
+                var saveUrl = sm ? sm[1].trim() : ''
+                if (!saveUrl) {
+                  // 文本里没有对应的保存链接时，用图片 URL 推导 save-local 端点，保证按钮出现。
+                  saveUrl = imgUrl.replace(/\/image\?/, '/save-local?')
+                }
+                var wrap = document.createElement('span')
+                wrap.style.cssText = 'display:inline-flex;flex-direction:row;align-items:center;margin:0.25em 0.75em 0.25em 0;vertical-align:middle'
+                var img = document.createElement('img')
+                img.src = imgUrl
+                img.alt = 'VisionForge 生成图'
+                img.setAttribute('data-vf-inline', '1')
+                img.style.cssText = 'display:inline-block;visibility:visible;max-width:160px;max-height:160px;cursor:zoom-in;border-radius:6px;object-fit:cover;vertical-align:middle;margin:0 0.75em 0 0'
+                var a = document.createElement('a')
+                a.setAttribute('data-vf-inline', '1')
+                a.href = saveUrl || imgUrl
+                a.textContent = '保存图片'
+                a.style.cssText = 'color:#1677ff!important;text-decoration:underline;margin:0;padding:0;background:transparent;border:none;font-size:inherit;line-height:inherit;cursor:pointer'
+                wrap.appendChild(img)
+                if (saveUrl) wrap.appendChild(a)
+                tn.parentNode.insertBefore(wrap, tn.nextSibling)
+              }
+            })
+          } catch (err) { /* best-effort */ }
+        }
+        function hideZoom() {
+          document.querySelectorAll('button').forEach(function (btn) {
+            if (hidden.has(btn)) return
+            var txt = (btn.textContent || '').trim()
+            if (/放大|zoom|enlarge/i.test(txt)) {
+              hidden.add(btn)
+              btn.style.display = 'none'
+            }
+          })
+        }
+        var hidden = new WeakSet()
+        splitSaveLinks()
+        hideZoom()
+
+        // 宿主重渲染可能移除 style / 把 img 重新包回链接 / 新增消息 —— 立即恢复。
+        if (window.MutationObserver) {
+          try {
+            var observer = new MutationObserver(function () {
+              ensureStyle()
+              splitSaveLinks()
+              hideZoom()
+            })
+            observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'src', 'class', 'hidden'] })
+            window.__vfObserver = observer
+          } catch (err) { /* observer is best-effort */ }
+        }
+        setInterval(splitSaveLinks, 1000)
+        setInterval(hideZoom, 1000)
+        setInterval(ensureStyle, 2000)
 
         document.addEventListener('click', function (event) {
           // 向上查找：点击可能落在 img 本身或宿主包它的容器（div/figure）上。
@@ -325,7 +587,11 @@ window.__ModuleLoader__.load({
               var path = cachePathOf(el)
               if (!path) return
               event.preventDefault()
-              event.stopPropagation()
+              // 必须是 stopImmediatePropagation（不是 stopPropagation）：
+              // 同一 document 上还有下载拦截监听（下方 358 行），宿主常把图片嵌在
+              // 保存链接 <a href="...save-local"> 内；只 stopPropagation 拦不住同节点
+              // 后续监听器，会导致"点击图片 = 同时下载 + 放大"。
+              event.stopImmediatePropagation()
               // 诊断：命中后上报，定位"点图无反应"卡在哪一环（无记录 = 监听器未触发）。
               try {
                 fetch('/visionforge/click-debug?path=' + encodeURIComponent(path), { method: 'GET' }).catch(function () {})
@@ -337,25 +603,15 @@ window.__ModuleLoader__.load({
           }
         }, true)
 
-        // 宿主可能给生成图卡片渲染「放大」按钮；它与「点击图片即查看」重复，
-        // 且会打开宿主侧边栏而非系统查看器 —— 拦截并隐藏。
-        var hidden = new WeakSet()
-        var hideZoom = function () {
-          document.querySelectorAll('button').forEach(function (btn) {
-            if (hidden.has(btn)) return
-            var txt = (btn.textContent || '').trim()
-            if (/放大|zoom|enlarge/i.test(txt)) {
-              hidden.add(btn)
-              btn.style.display = 'none'
-            }
-          })
-        }
-        hideZoom()
-        setInterval(hideZoom, 4000)
+        // （新版 hideZoom 已在注入函数上方定义，此处不再重复。）
 
         // 下载/保存链接（/visionforge/download、download-local、save-local）被宿主渲染成按钮时，
         // 统一改走本地保存（复制到 D 盘根并定位，不经过宿主侧边栏）。
         document.addEventListener('click', function (event) {
+          // 图片点击（打开系统查看器）已处理过的事件直接跳过：
+          // 同一 document 双 capture 监听，只有 stopImmediatePropagation 能拦住后续监听器，
+          // 这里再加 defaultPrevented 守卫做双保险，避免"点击图片 = 同时下载 + 放大"。
+          if (event.defaultPrevented) return
           var anchor = event.target
           while (anchor && anchor.tagName !== 'A') anchor = anchor.parentNode
           if (!anchor) return
@@ -365,6 +621,8 @@ window.__ModuleLoader__.load({
           event.stopPropagation()
           downloadLocal(href)
         }, true)
+
+        // （新版 splitSaveLinks 已在注入函数上方定义，此处不再重复。）
       } catch (error) {
         console.error('[visionforge] preview styles skipped: ' + error)
       }

@@ -33,7 +33,7 @@ import {
 import { inferGenImagePaths, inferGenRequestTemplate, inferReadContentPath, inferReadRequestTemplate } from '../src/request-template.js'
 
 const CLI_PATH = fileURLToPath(new URL('../src/index.js', import.meta.url))
-const CLI_TIMEOUT_MS = 180_000
+const CLI_TIMEOUT_MS = 260_000
 const CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000
 // C2：当前 DSH 会话生成/粘贴的文件（一键清理时保留，避免破坏对话内图片的放大/下载）
 const sessionTracked = new Set()
@@ -590,21 +590,47 @@ function openConfigInEditor() {
 }
 
 // ---- CLI 子进程 --------------------------------------------------------------
-function runCli(args, signal) {
+// signal：宿主的取消信号（DSH 停止按钮 / 工具超时都会触发 abort → 立即 kill 子进程）。
+// 内部超时兜底：即使宿主没传 signal 或没 abort，CLI 挂死也不会永远占用（180s 后强杀）。
+function runCli(args, signal, timeoutMs = CLI_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
-    const child = spawnHidden(process.execPath, [CLI_PATH, ...args], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      signal,
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-    })
+    let settled = false
+    let child = null
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      try { if (child) child.kill('SIGKILL') } catch { /* ignore */ }
+      reject(new Error(`visionforge CLI timed out after ${timeoutMs}ms`))
+    }, timeoutMs)
+    try {
+      child = spawnHidden(process.execPath, [CLI_PATH, ...args], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        signal,
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', VISIONFORGE_INTERNAL: '1' },
+      })
+    } catch (e) {
+      settled = true
+      clearTimeout(timer)
+      return reject(e)
+    }
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
     let stdout = ''
     let stderr = ''
     child.stdout.on('data', (chunk) => { stdout += chunk })
     child.stderr.on('data', (chunk) => { stderr += chunk })
-    child.on('error', reject)
-    child.on('close', (code) => resolve({ stdout, stderr, code }))
+    child.on('error', (e) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      reject(e)
+    })
+    child.on('close', (code) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve({ stdout, stderr, code })
+    })
   })
 }
 
@@ -640,13 +666,21 @@ function buildPreviewMarkdown(value) {
   urls.forEach((u, i) => {
     if (typeof u !== 'string') return
     const fp = files[i]
-    // 图片作为整体卡片：缩略图 src = 本地回环 /visionforge/image（渲染器可显示）；
-    // 点击图片本体由 client.js 捕获 → /visionforge/open → 系统图片查看器（不经过侧边栏）。
-    const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
-    const thumb = local ?? u
-    // 下载按钮：点击后把缓存图复制到 D 盘根目录（无 D 盘则用户目录 VisionForge）并在资源管理器中定位
-    const dl = port > 0 && typeof fp === 'string' ? ` [保存图片 ${i + 1}](http://127.0.0.1:${port}/visionforge/save-local?path=${encodeURIComponent(fp)})` : ''
-    lines.push(`![生成图 ${i + 1}](${thumb})${dl}`)
+    if (port > 0 && typeof fp === 'string') {
+      // 图片作为整体卡片：缩略图 src = 本地回环 /visionforge/image（渲染器可显示）；
+      // 点击图片本体由 client.js 捕获 → /visionforge/open → 系统图片查看器（不经过侧边栏）。
+      const local = `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}`
+      // 下载按钮：点击后把缓存图复制到 D 盘根目录（无 D 盘则用户目录 VisionForge）并在资源管理器中定位
+      const dl = ` [保存图片 ${i + 1}](http://127.0.0.1:${port}/visionforge/save-local?path=${encodeURIComponent(fp)})`
+      lines.push(`![生成图 ${i + 1}](${local})${dl}`)
+    } else if (typeof fp === 'string') {
+      // 本地预览服务未启动（端口被占用）：不输出远程临时 URL 图（无法放大/下载，且 agent 会误判失败重试），
+      // 改为明确告知保存路径 —— agent 看到“已保存”就不会重试，用户可去缓存目录查看。
+      lines.push(`生成图 ${i + 1} 已保存：${fp}`)
+      lines.push(`（本地预览服务未启动，对话内暂时无法预览/下载；请到该路径查看，或重启 DSH 后重新生成即可获得完整预览）`)
+    } else {
+      lines.push(`![生成图 ${i + 1}](${u})`)
+    }
   })
   if (typeof v.provider === 'string') lines.push(`Provider: ${v.provider}`)
   if (typeof v.model === 'string' && v.model !== '') lines.push(`Model: ${v.model}`)
@@ -667,10 +701,14 @@ function renderGenText(value) {
   urls.forEach((u, i) => {
     if (typeof u !== 'string') return
     const fp = files[i]
-    // 缩略图 src = 本地回环 /visionforge/image；点击图片本体由 client.js 捕获 → 系统图片查看器
-    const local = port > 0 && typeof fp === 'string' ? `http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)}` : null
-    const thumb = local ?? u
-    lines.push(`![生成图 ${i + 1}](${thumb})`)
+    if (port > 0 && typeof fp === 'string') {
+      // 缩略图 src = 本地回环 /visionforge/image；点击图片本体由 client.js 捕获 → 系统图片查看器
+      lines.push(`![生成图 ${i + 1}](http://127.0.0.1:${port}/visionforge/image?path=${encodeURIComponent(fp)})`)
+    } else if (typeof fp === 'string') {
+      lines.push(`生成图 ${i + 1} 已保存：${fp}（本地预览服务未启动，暂无法对话内预览）`)
+    } else {
+      lines.push(`![生成图 ${i + 1}](${u})`)
+    }
   })
   if (port > 0 && files.length > 0) {
     lines.push('')
@@ -714,6 +752,17 @@ function startRenderServer() {
         const isSaveLocal = url.pathname === '/visionforge/save-local'
         const isDownloadLocal = url.pathname === '/visionforge/download-local'
         const isClickDebug = url.pathname === '/visionforge/click-debug'
+        const isLog = url.pathname === '/visionforge/log'
+        if (isLog) {
+          // 诊断：client.js 上报（匹配统计/错误），写入 server.log 供排查 DOM 层盲区。
+          try {
+            mkdirSync(outDir, { recursive: true })
+            appendFileSync(join(outDir, 'server.log'), `${new Date().toISOString()} diag msg=${url.searchParams.get('msg') ?? ''}\n`)
+          } catch { /* log best-effort */ }
+          res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' })
+          res.end('{"ok":true}')
+          return
+        }
         if (isClickDebug) {
           // 诊断：client.js 点击捕获命中后上报，用于定位"点图无反应"卡在哪一环。
           try {
@@ -736,8 +785,20 @@ function startRenderServer() {
           return
         }
         const file = resolve(raw)
+        try {
+          // 请求日志：记录每次图片/下载请求，用于确认历史消息的图是否被 DOM 请求到。
+          mkdirSync(outDir, { recursive: true })
+          appendFileSync(join(outDir, 'server.log'), `${new Date().toISOString()} req path=${url.pathname} file=${basename(file)}\n`)
+        } catch { /* log best-effort */ }
         const inOut = dirname(file) === outDir || dirname(file).startsWith(outDir + sep)
-        if ((!inOut && !servedFiles.has(file)) || !existsSync(file)) {
+        // 白名单：out 目录或本会话生成图（servedFiles）。DSH 重启后 servedFiles 会清空，
+        // 历史消息里保存到工作区的图（如 beach_1.png 不在 out）会 403 导致预览/放大/下载不可见。
+        // 放宽为：文件真实存在 + 图片扩展名即服务（服务只绑定 127.0.0.1 回环 + 只读 GET，可接受）。
+        if (!existsSync(file)) {
+          res.writeHead(403).end('forbidden')
+          return
+        }
+        if (!inOut && !servedFiles.has(file) && !/\.(png|jpe?g|webp|gif|heic|heif|bmp)$/i.test(file)) {
           res.writeHead(403).end('forbidden')
           return
         }
@@ -858,9 +919,18 @@ function startRenderServer() {
     const onListenSuccess = () => {
       const addr = server.address()
       renderServerPort = typeof addr === 'object' && addr ? addr.port : 0
+      try {
+        mkdirSync(outDir, { recursive: true })
+        appendFileSync(join(outDir, 'server.log'), `${new Date().toISOString()} listen OK port=${renderServerPort}\n`)
+      } catch { /* logging best-effort */ }
       void sweepCaches()
     }
     const onListenError = (e) => {
+      console.error(`[visionforge] render server listen failed: ${(e && e.code) || e}`)
+      try {
+        mkdirSync(outDir, { recursive: true })
+        appendFileSync(join(outDir, 'server.log'), `${new Date().toISOString()} listen failed code=${(e && e.code) || e} candidates=${candidateIndex}\n`)
+      } catch { /* logging best-effort */ }
       if (e && e.code === 'EADDRINUSE') {
         candidateIndex += 1
         if (candidateIndex < LOOPBACK_PORTS.length) {
@@ -883,6 +953,23 @@ function startRenderServer() {
   } catch {
     return 0
   }
+}
+
+// 等待本地预览服务监听完成（server.listen 是异步的）。重启后立即调用生图工具时，
+// renderServerPort 可能还是 0，导致 previewMarkdown 没有本地图 URL / 保存按钮。
+function waitRenderServer(timeoutMs = 2500) {
+  return new Promise((resolve) => {
+    if (renderServerPort > 0) return resolve(renderServerPort)
+    try { startRenderServer() } catch { /* ignore */ }
+    if (renderServerPort > 0) return resolve(renderServerPort)
+    const t0 = Date.now()
+    const timer = setInterval(() => {
+      if (renderServerPort > 0 || Date.now() - t0 >= timeoutMs) {
+        clearInterval(timer)
+        resolve(renderServerPort)
+      }
+    }, 60)
+  })
 }
 
 // ---- 设置页服务 ---------------------------------------------------------------
@@ -1777,6 +1864,16 @@ function makeReadTool(toolName, recentPastePathsRef, toolCache) {
     }),
     async execute(args, exec) {
       let path = args?.path
+      // 容错：agent 可能把数组序列化成字符串传入（如 "[\"D:\\...jpg\"]"），解析成数组后取第一个。
+      if (typeof path === 'string') {
+        const t = path.trim()
+        if (t.startsWith('[') && t.endsWith(']')) {
+          try {
+            const parsed = JSON.parse(t)
+            if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'string') path = parsed[0]
+          } catch { /* keep as string */ }
+        }
+      }
       if (args?.source === 'auto') {
         if (recentPastePathsRef.length === 0) {
           throw new Error(`${toolName} source:"auto" has no recent pasted image — paste an image into the composer first, or pass an explicit "path".`)
@@ -1793,7 +1890,8 @@ function makeReadTool(toolName, recentPastePathsRef, toolCache) {
         const cliArgs = ['-i', path, '--timeout', String(CLI_TIMEOUT_MS)]
         if (args.prompt) cliArgs.push('--prompt', args.prompt)
         const run = (async () => {
-          const { stdout, stderr, code } = await runCli(cliArgs, undefined)
+          const sig = exec && (exec.signal || exec.abortSignal)
+          const { stdout, stderr, code } = await runCli(cliArgs, sig)
           if (code !== 0) throw new Error(`visionforge failed (exit ${code}): ${(stderr || stdout).trim().slice(0, 500)}`)
           let parsed
           try {
@@ -1837,7 +1935,7 @@ function makeReadTool(toolName, recentPastePathsRef, toolCache) {
         run.catch(() => { toolCache.delete(cacheKey) })
         pending = run
       }
-      return structuredClone(await abortable(pending, exec.signal))
+      return structuredClone(await abortable(pending, exec && exec.signal))
     },
   }
 }
@@ -1874,7 +1972,7 @@ function makeGenTool(toolName, mode, outputDirOfConfig) {
       schema: IMAGE_GEN_SCHEMA,
       render: (_args, value) => [{ type: 'text', text: renderGenText(value) }],
     },
-    timeoutMs: 140_000,
+    timeoutMs: 300_000,
     isConcurrencySafe: () => true,
     presentCall: (args) => ({
       card: 'generic',
@@ -1891,14 +1989,26 @@ function makeGenTool(toolName, mode, outputDirOfConfig) {
           })()
         : {}),
     }),
-    async execute(args) {
+    async execute(args, exec) {
       let inputs = []
       if (mode === 'generate') {
         if (typeof args?.prompt !== 'string' || args.prompt.trim() === '') {
           throw new Error(`${toolName} needs a non-empty string "prompt".`)
         }
       } else {
-        inputs = (Array.isArray(args?.input) ? args.input : [args.input])
+        // 容错：agent 可能把路径数组序列化成字符串传进来（如 "[\"D:\\...jpg\"]"），
+        // 先识别 JSON 数组字符串并解析成数组，避免把字面量当路径 stat（ENOENT）。
+        let rawInput = args?.input
+        if (typeof rawInput === 'string') {
+          const t = rawInput.trim()
+          if (t.startsWith('[') && t.endsWith(']')) {
+            try {
+              const parsed = JSON.parse(t)
+              if (Array.isArray(parsed)) rawInput = parsed
+            } catch { /* keep as string */ }
+          }
+        }
+        inputs = (Array.isArray(rawInput) ? rawInput : [rawInput])
           .map((x) => (typeof x === 'string' ? x.trim() : ''))
           .filter((x) => x.length > 0)
         if (inputs.length === 1 && inputs[0] === 'auto') {
@@ -1922,8 +2032,9 @@ function makeGenTool(toolName, mode, outputDirOfConfig) {
         const c = parseInt(String(args.count).trim(), 10)
         if (Number.isFinite(c)) outCount = Math.max(1, Math.min(6, Math.floor(c)))
       }
-      const outputs = []
-      for (let n = 1; n <= outCount; n++) {
+      // count>1 时并行调用各变体（串行会让总时长超过工具超时 → 宿主反复重试 / 只出第一张）。
+      // 部分失败不整体报错：成功的图照常返回，失败原因经 enhanceNotice 转达给宿主。
+      const runOne = async (n) => {
         const prompt = outCount > 1 ? `${args.prompt} — 第 ${n}/${outCount} 个变体：请输出与前一张不同的构图、姿态、角度或光影` : args.prompt
         const cliArgs = [mode, '--prompt', prompt]
         if (mode === 'edit') cliArgs.push('--input', ...inputs)
@@ -1936,18 +2047,31 @@ function makeGenTool(toolName, mode, outputDirOfConfig) {
         if (typeof args.provider === 'string' && args.provider.trim() !== '') cliArgs.push('--provider', args.provider)
         if (typeof args.model === 'string' && args.model.trim() !== '') cliArgs.push('--model', args.model)
         cliArgs.push('--timeout', String(CLI_TIMEOUT_MS))
-        const { stdout, stderr, code } = await runCli(cliArgs, undefined)
+        const sig = exec && (exec.signal || exec.abortSignal)
+        const { stdout, stderr, code } = await runCli(cliArgs, sig)
         if (code !== 0) {
-          throw new Error(`visionforge ${mode} failed (exit ${code}): ${(stderr || stdout).trim().slice(0, 500)}`)
+          return { ok: false, error: `visionforge ${mode} failed (exit ${code}): ${(stderr || stdout).trim().slice(0, 500)}` }
         }
         let parsed
         try {
           parsed = JSON.parse(stdout)
         } catch {
-          throw new Error(`visionforge ${mode} produced no JSON: ${stdout.trim().slice(0, 300)}`)
+          return { ok: false, error: `visionforge ${mode} produced no JSON: ${stdout.trim().slice(0, 300)}` }
         }
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) outputs.push(parsed)
+        return { ok: true, parsed }
       }
+      const results = await Promise.allSettled(Array.from({ length: outCount }, (_, i) => runOne(i + 1)))
+      const outputs = []
+      const errors = []
+      results.forEach((r, idx) => {
+        const res = r.status === 'fulfilled' ? r.value : { ok: false, error: (r.reason && r.reason.message) || String(r.reason) }
+        if (res.ok && res.parsed && typeof res.parsed === 'object' && !Array.isArray(res.parsed)) outputs.push(res.parsed)
+        else if (res.error) errors.push(`第 ${idx + 1} 张: ${res.error}`)
+      })
+      if (outputs.length === 0) {
+        throw new Error(errors[0] || `visionforge ${mode} failed`)
+      }
+      const partialNotice = errors.length > 0 ? `部分图片生成失败：${errors.join('；')}` : ''
       const merged =
         outputs.length === 1
           ? outputs[0]
@@ -1957,7 +2081,14 @@ function makeGenTool(toolName, mode, outputDirOfConfig) {
               m.filePaths = outputs.map((o) => o?.filePath).filter((x) => typeof x === 'string')
               return m
             })()
+      // 确保本地预览服务已就绪（listen 是异步的；重启后立即生成时 port 可能还是 0，
+      // 会导致 previewMarkdown 无本地图 URL / 无保存按钮 → 消息里图片和按钮全不见）。
+      await waitRenderServer()
+      // 用户已按停止：立即失败，不再构建输出（插件不拖累宿主核心工作）
+      const sig = exec && (exec.signal || exec.abortSignal)
+      if (sig && sig.aborted) throw new Error('visionforge aborted by user')
       if (merged && typeof merged === 'object' && !Array.isArray(merged)) {
+        if (partialNotice) merged.enhanceNotice = merged.enhanceNotice ? `${merged.enhanceNotice}；${partialNotice}` : partialNotice
         merged.previewMarkdown = buildPreviewMarkdown(merged)
         const produced = Array.isArray(merged.filePaths) ? merged.filePaths : [merged.filePath]
         for (const fp of produced) if (typeof fp === 'string') sessionTracked.add(resolve(fp))
@@ -2375,6 +2506,184 @@ function registerAutoRead(ctx, evidenceCache) {
   })
 }
 
+// ---- 0.2.0+ 服务端入口拦截（patch sessionController.prompt + resolveModelInfo）-----
+// 0.2.0-rc.2 在 prompt 入口对「纯文本模型 + 图片附件」直接抛 MODEL_DOES_NOT_SUPPORT_IMAGES
+//（在 admit 之前），agent/pre-step 调度器根本触发不到。方向 B（保留宿主缩略图）：
+// ① patch ctx.llm.resolveModelInfo——对"不支持图片的模型"返回不含 inputModalities 的信息，
+//    让 session-controller 的 `inputModalities !== void 0` 检查跳过（873 行）；
+// ② image part 原样保留 → admitPromptContent 落盘（前端宿主 rail 缩略图渲染）；
+// ③ agent/pre-step（registerAutoRead）再把 image part 转成读图证据文本（模型输入仍纯文本）。
+function patchResolveModelInfo(ctx) {
+  const llm = ctx?.llm
+  if (!llm || typeof llm.resolveModelInfo !== 'function') return
+  if (llm.__visionforgeResolvePatched) return
+  llm.__visionforgeResolvePatched = true
+  const orig = llm.resolveModelInfo.bind(llm)
+  llm.resolveModelInfo = async (provider, model, signal) => {
+    const info = await orig(provider, model, signal)
+    if (
+      info &&
+      typeof info === 'object' &&
+      Array.isArray(info.inputModalities) &&
+      !info.inputModalities.includes('image')
+    ) {
+      const { inputModalities, ...rest } = info
+      return rest
+    }
+    return info
+  }
+}
+
+function registerPromptInterceptor(ctx, config = {}) {
+  const patch = (ctl) => {
+    if (!ctl || typeof ctl.prompt !== 'function') {
+      interceptorLog(`sessionController 可用但 prompt 不是函数（${ctl ? typeof ctl.prompt : 'ctl 为空'}）`)
+      return
+    }
+    if (ctl.__visionforgePromptPatched) return
+    ctl.__visionforgePromptPatched = true
+    const origPrompt = ctl.prompt.bind(ctl)
+    const NEVER_SIGNAL = new AbortController().signal
+    ctl.prompt = async (request, signal) => {
+      // 注意：整个函数体同步执行（不 await），保持 typert Remote 调用上下文
+      // （ctx.invocation / abort signal）在 origPrompt 启动时仍然有效。
+      // signal 必须透传：SessionController.prompt(request, signal) 入口
+      // （dsh-api-session-controller 3097 行）第一行就是 signal.throwIfAborted()，
+      // 不透传会让纯文本模型发图时 signal 为 undefined 而崩（gateway/internal）。
+      const safeSignal = signal ?? NEVER_SIGNAL
+      try {
+        const content = request?.content
+        const types = Array.isArray(content) ? content.map((p) => p?.type) : 'not-array'
+        const hasImage = Array.isArray(content) && content.some((part) => part?.type === 'image')
+        interceptorLog(`prompt 调用：types=[${types}] hasImage=${hasImage} signal=${signal ? 'provided' : 'undefined→fallback'} sessionId=${request?.sessionId ?? ''}`)
+        if (hasImage) {
+          // 方向 B+（无痕版）：保留 image part 原样（前端宿主缩略图渲染；873 由
+          // resolveModelInfo 补丁放行，image part 经 admitPromptContent 落盘）+
+          // 同步把图片字节落盘到 paste 目录并加入 recentPastePaths（read/edit 的
+          // source:"auto"/input:"auto" 可解析到路径）。不再附加任何 text part——
+          // agent 靠 llm 原生的 textOnlyImageText 占位（"[image omitted because this
+          // model accepts text only; attachment sha256:…]"）触发 VisionForge skill，
+          // 然后以 "auto" 调用读图/编辑。消息里只有缩略图，零额外文本。
+          const pasteDir = join(outputDir(), 'paste')
+          try { mkdirSync(pasteDir, { recursive: true }) } catch { /* best-effort */ }
+          const ts = new Date().toISOString().replace(/[:.]/g, '-')
+          let index = 0
+          let saved = 0
+          for (const part of request.content) {
+            if (part?.type === 'image' && typeof part.data === 'string') {
+              const ext = mediaExtOf(part.mediaType)
+              const path = join(pasteDir, `vf-${ts}-${index++}.${ext}`)
+              try {
+                writeFileSync(path, Buffer.from(part.data, 'base64'))
+                recentPastePaths.push(path)
+                if (recentPastePaths.length > RECENT_PASTE_CAP) recentPastePaths.shift()
+                try { sessionTracked.add(resolve(path)) } catch { /* best-effort */ }
+                saved++
+              } catch (error) {
+                interceptorLog(`方向 B+ paste 写入失败：${error}`)
+              }
+            }
+          }
+          if (saved > 0) interceptorLog(`方向 B+ 落盘 paste ${saved} 个（未附加任何文本；auto 可解析）`)
+        }
+      } catch (error) {
+        interceptorLog(`prompt interceptor error: ${error}`)
+      }
+      let promise
+      try {
+        promise = origPrompt(request, safeSignal)
+      } catch (error) {
+        interceptorLog(`origPrompt 同步抛错：${error?.message ?? error}${error?.stack ? `\n${error.stack}` : ''}`)
+        throw error
+      }
+      if (promise && typeof promise.then === 'function') {
+        let settled = false
+        promise.then(
+          (result) => {
+            if (settled) return
+            settled = true
+            interceptorLog(`origPrompt 返回：accepted=${result?.accepted ?? 'unknown'} result=${JSON.stringify(result)?.slice(0, 150) ?? String(result)}`)
+          },
+          (error) => {
+            if (settled) return
+            settled = true
+            interceptorLog(`origPrompt 抛错：${error?.message ?? error}${error?.stack ? `\n${error.stack}` : ''}`)
+          }
+        )
+        setTimeout(() => {
+          if (!settled) interceptorLog('origPrompt 10 秒未 settle（可能卡住或错误走其他通道）')
+        }, 10000)
+      } else {
+        interceptorLog(`origPrompt 返回非 promise：${String(promise)}`)
+      }
+      return promise
+    }
+    interceptorLog(`patch 成功：sessionController.prompt 已包装（服务名 sessionController）`)
+  }
+  if (typeof ctx.inject === 'function') {
+    try {
+      ctx.inject(['sessionController'], (scope) => patch(scope.sessionController))
+      interceptorLog('已通过 ctx.inject(["sessionController"]) 请求注入')
+    } catch (error) {
+      interceptorLog(`ctx.inject 注册失败：${error}`)
+    }
+  } else {
+    try { patch(ctx.sessionController) } catch (error) { interceptorLog(`直接访问失败：${error}`) }
+  }
+}
+
+function interceptorLog(line) {
+  try {
+    const dir = outputDir()
+    mkdirSync(dir, { recursive: true })
+    appendFileSync(join(dir, 'interceptor.log'), `${new Date().toISOString()} ${line}\n`)
+  } catch { /* logging is best-effort */ }
+}
+
+function rewritePromptImages(request, config) {
+  const content = request.content
+  const priority = readConfig()?.visionPriority ?? config.visionPriority ?? 'plugin'
+  // host 优先：0.2.0-rc.2 下模型能力解析需异步调用（resolveAgent/resolveModelInfo），
+  // 会破坏 typert Remote 调用上下文（ctx.invocation/abort signal）。
+  // 同步拦截阶段统一按插件接管；host 语义由 agent/pre-step 钩子（registerAutoRead）兜底。
+  if (priority === 'host') interceptorLog('host 优先：同步拦截阶段按插件接管（模型放行由后续钩子处理）')
+  const pasteDir = join(outputDir(), 'paste')
+  try { mkdirSync(pasteDir, { recursive: true }) } catch { /* best-effort */ }
+  const ts = new Date().toISOString().replace(/[:.]/g, '-')
+  const out = []
+  let index = 0
+  for (const part of content) {
+    if (part?.type === 'image' && typeof part.data === 'string') {
+      const ext = mediaExtOf(part.mediaType)
+      const path = join(pasteDir, `vf-${ts}-${index++}.${ext}`)
+      try {
+        writeFileSync(path, Buffer.from(part.data, 'base64'))
+        interceptorLog(`图片字节已保存：${path}（mediaType=${part.mediaType} data.length=${part.data.length}）`)
+      } catch (error) {
+        interceptorLog(`paste 写入失败：${error}`)
+        out.push(part)
+        continue
+      }
+      const preview = renderServerPort > 0
+        ? `http://127.0.0.1:${renderServerPort}/visionforge/image?path=${encodeURIComponent(path)}`
+        : null
+      out.push({ type: 'text', text: `[Image: source: ${path}]${preview ? `\n![图片](${preview})` : ''}` })
+    } else {
+      out.push(part)
+    }
+  }
+  return out
+}
+
+function mediaExtOf(mediaType) {
+  if (typeof mediaType !== 'string') return 'png'
+  if (mediaType.includes('jpeg') || mediaType.includes('jpg')) return 'jpg'
+  if (mediaType.includes('webp')) return 'webp'
+  if (mediaType.includes('gif')) return 'gif'
+  if (mediaType.includes('heic') || mediaType.includes('heif')) return 'heic'
+  return 'png'
+}
+
 // ---- 缓存清扫 ----------------------------------------------------------------------
 async function sweepCaches(now = Date.now(), ttlMs = CACHE_TTL_MS, skipSet = null) {
   let removed = 0
@@ -2703,9 +3012,23 @@ export function apply(ctx, config = {}) {
     }
   }
 
-  // 自动读图（可选）。
+  // 自动读图（pre-step 钩子，默认关闭）：方向 B+ 下 image part 保留（前端缩略图），
+  // agent 靠消息里的 <!-- VF_IMAGE: 路径 --> 注释主动读图/编辑；pre-step 转换会把
+  // image part 替换成证据文本、破坏前端缩略图显示，故默认不启用，仅显式开启时注册。
   if (config.autoRead === true) {
     registerAutoRead(ctx, evidenceCache)
+  }
+
+  // 服务端入口拦截（0.2.0+ 纯文本模型图片消息被入口拒绝，需在 prompt 前接管）。
+  try {
+    patchResolveModelInfo(ctx)
+  } catch (error) {
+    console.error(`[visionforge] resolveModelInfo patch skipped: ${error}`)
+  }
+  try {
+    registerPromptInterceptor(ctx, config)
+  } catch (error) {
+    console.error(`[visionforge] prompt interceptor registration skipped: ${error}`)
   }
 
   // 宿主路由（粘贴 / 配置）。

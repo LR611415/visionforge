@@ -216,8 +216,8 @@ const CONSTRAINT_GROUPS = [
     },
     {
         id: 'hair',
-        keywords: ['换发型', '改发型', '换个发型', '烫发', '染发', '剪发', '剪短', '留长', '扎起来', '披下来', '梳起来'],
-        text: '保持人物发型与发色不变',
+        keywords: ['换发型', '改发型', '换个发型', '烫发', '染发', '剪发', '剪短', '留长', '扎起来', '披下来', '梳起来', '改变发型', '发型可以改变', '发型改变', '换个造型', '变个发型', '发型变化', '换一个发型'],
+        text: '发型严格锁定原图：发型、发色、发量、刘海、纹理与长度与原图完全一致，不得更换造型、不得改变长短疏密、不得添加原图没有的发型特征（如纹理烫、发胶造型、新刘海、更蓬松等）；即使指令中出现发型相关描述词，发型仍一律以原图为准，描述仅供参考、不得执行改动',
     },
     {
         id: 'body',
@@ -276,9 +276,9 @@ const CONSTRAINT_GROUPS = [
 // 提示词「怎么写好」是宿主（LLM）的工作：主体/动作/环境/光影/构图/画质等细节描写
 // 由宿主按写作指南撰写，本插件**绝不代写**画面细节。插件只做两件事：
 //   1. 追加保护性边界约束（防换脸/防畸变/防穿模/姿态语义澄清等，见 CONSTRAINT_GROUPS）；
-//   2. 检测宿主提示词「字数不足 50 字 或 六维覆盖 < 3 维」时，返回 notice 提醒宿主
+//   2. 检测宿主提示词「字数不足 100 字 或 六维覆盖 < 3 维」时，返回 notice 提醒宿主
 //      按写作指南补细节，并点名**缺失维度**；提醒文字不写入 prompt、不代写内容。
-const PROMPT_LENGTH_FLOOR = 50;
+const PROMPT_LENGTH_FLOOR = 100;
 const GUIDE_DIM_MIN = 3;
 
 // 提示词写作指南六维检测词表（中英文代表词；只用于“指导宿主”，不用于改写）
@@ -286,27 +286,27 @@ const GUIDE_DIMS = [
     {
         id: 'subject',
         label: '主体特征',
-        words: ['女生', '男生', '女孩', '男孩', '女人', '男人', '人物', '情侣', '小孩', '老人', '学生', '模特', '她', '他', '狗', '猫', '犬', '鸟', '马', '宠物', '穿', '戴', '长发', '短发', '发色', '肤色', '体型', '身材', 't恤', '衬衫', '连衣裙', '裙', '裤', '帽', '眼镜', '胡子', 'woman', 'man', 'girl', 'boy', 'person', 'people', 'couple', 'child', 'student', 'dog', 'cat', 'bird', 'horse', 'pet', 'wearing', 'dress', 'shirt', 'hair'],
+        words: ['女生', '男生', '女孩', '男孩', '女人', '男人', '人物', '情侣', '小孩', '老人', '学生', '模特', '她', '他', '狗', '猫', '犬', '鸟', '马', '宠物', '穿', '戴', '长发', '短发', '发色', '肤色', '体型', '身材', 't恤', '衬衫', '连衣裙', '裙', '裤', '帽', '眼镜', '胡子', '棉麻', '牛仔', '丝绸', '雪纺', '亚克力', '皮革', '西装', '毛衣', 'woman', 'man', 'girl', 'boy', 'person', 'people', 'couple', 'child', 'student', 'dog', 'cat', 'bird', 'horse', 'pet', 'wearing', 'dress', 'shirt', 'hair'],
     },
     {
         id: 'action',
         label: '动作姿态',
-        words: ['站', '坐', '躺', '跑', '走', '骑', '抱', '牵', '搂', '亲', '吻', '跳', '蹲', '靠', '拿', '举', '梳', '看', '笑', '挥手', '散步', '奔跑', '跳舞', '唱歌', '玩', '握', '扶', '踩', '依偎', '拥抱', '接吻', '骑行', '开车', '飞翔', '游泳', 'walk', 'run', 'sit', 'stand', 'ride', 'hug', 'kiss', 'dance', 'jump', 'hold', 'play', 'swim', 'fly', 'wave'],
+        words: ['站', '坐', '躺', '跑', '走', '骑', '抱', '牵', '搂', '亲', '吻', '跳', '蹲', '靠', '拿', '举', '梳', '看', '笑', '挥手', '散步', '奔跑', '跳舞', '唱歌', '玩', '握', '扶', '踩', '依偎', '拥抱', '接吻', '骑行', '开车', '飞翔', '游泳', '姿势', 'pose', 'walk', 'run', 'sit', 'stand', 'ride', 'hug', 'kiss', 'dance', 'jump', 'hold', 'play', 'swim', 'fly', 'wave'],
     },
     {
         id: 'scene',
         label: '场景环境',
-        words: ['海边', '沙滩', '海岸', '校园', '学校', '公园', '草地', '树林', '森林', '街道', '城市', '马路', '广场', '卧室', '客厅', '房间', '室内', '户外', '山里', '湖边', '河边', '阳台', '厨房', '办公室', '教室', '操场', '图书馆', 'beach', 'park', 'campus', 'school', 'street', 'room', 'indoor', 'outdoor', 'forest', 'mountain', 'lake', 'river', 'garden', 'field'],
+        words: ['海边', '沙滩', '海岸', '校园', '学校', '公园', '草地', '树林', '森林', '街道', '城市', '马路', '广场', '卧室', '客厅', '房间', '室内', '户外', '山里', '湖边', '河边', '阳台', '厨房', '办公室', '教室', '操场', '图书馆', '背景', '台面', '桌面', '路面', 'beach', 'park', 'campus', 'school', 'street', 'room', 'indoor', 'outdoor', 'forest', 'mountain', 'lake', 'river', 'garden', 'field'],
     },
     {
         id: 'light',
         label: '光影氛围',
-        words: ['光影', '光线', '阳光', '灯光', '晨光', '夕阳', '黄昏', '逆光', '柔和', '明亮', '暖色', '冷调', '氛围', '清晨', '傍晚', '夜晚', '白天', '晴天', '阴天', '光照', 'light', 'sun', 'sunlight', 'glow', 'shadow', 'warm', 'bright', 'mood', 'morning', 'evening', 'night', 'sunset'],
+        words: ['光影', '光线', '阳光', '灯光', '晨光', '夕阳', '黄昏', '逆光', '柔和', '明亮', '暖色', '冷调', '氛围', '清晨', '傍晚', '夜晚', '白天', '晴天', '阴天', '光照', '柔光', '硬光', '侧光', '顶光', '漫射', '暖金', '冷白', '霓虹', '色温', 'light', 'sun', 'sunlight', 'glow', 'shadow', 'warm', 'bright', 'mood', 'morning', 'evening', 'night', 'sunset'],
     },
     {
         id: 'composition',
         label: '构图视角',
-        words: ['构图', '视角', '镜头', '景别', '中景', '近景', '远景', '特写', '全景', '俯视', '仰视', '平视', '正面', '侧面', '机位', '背景虚化', 'composition', 'angle', 'view', 'close-up', 'closeup', 'wide shot', 'medium shot', 'perspective'],
+        words: ['构图', '视角', '镜头', '景别', '中景', '近景', '远景', '特写', '全景', '俯视', '仰视', '平视', '正面', '侧面', '机位', '背景虚化', '景深', '虚化', '居中', '三分', '留白', '低角度', 'composition', 'angle', 'view', 'close-up', 'closeup', 'wide shot', 'medium shot', 'perspective'],
     },
     {
         id: 'quality',
@@ -334,10 +334,10 @@ function buildGuideNotice(len, dims, mode) {
     const missing = GUIDE_DIMS.filter((d) => !dims.has(d.id)).map((d) => d.label);
     const missText = missing.length > 0 ? `，缺少：${missing.join('、')}` : '';
     if (mode === 'generate') {
-        return `提示词仅 ${len} 字${missText}。文生图无原图可依，请按提示词写作指南补全六维：主体特征与状态、动作姿态、场景环境、光影氛围、构图视角、画质要求（建议 ≥50 字，逐项写具体）。本插件只添加保护性边界约束，不会代写画面细节。`;
+        return `提示词仅 ${len} 字${missText}。文生图无原图可依，请按提示词写作指南补全六维：主体特征与状态、动作姿态、场景环境、光影氛围、构图视角、画质要求（建议 ≥100 字，逐项写具体）。本插件只添加保护性边界约束，不会代写画面细节。`;
     }
     const keepScene = missing.includes('场景环境') || missing.includes('光影氛围') || missing.includes('构图视角');
-    return `提示词仅 ${len} 字${missText}。图生图请先读图锁定身份（面部/发型/身材），再按提示词写作指南补充细节：已覆盖 ${covered.join('、') || '（无）'}${missing.length > 0 ? `，补全缺失维度（${missing.join('、')}）` : ''}${keepScene ? '；若新场景不变、原图光影构图保持不变，可写明“保持原图场景光线构图”' : ''}（建议 ≥50 字，逐项写具体）。本插件只添加保护性边界约束，不会代写画面细节。`;
+    return `提示词仅 ${len} 字${missText}。图生图请先读图锁定身份（面部/发型/身材），再按提示词写作指南补充细节：已覆盖 ${covered.join('、') || '（无）'}${missing.length > 0 ? `，补全缺失维度（${missing.join('、')}）` : ''}${keepScene ? '；若新场景不变、原图光影构图保持不变，可写明“保持原图场景光线构图”' : ''}（建议 ≥100 字，逐项写具体）。本插件只添加保护性边界约束，不会代写画面细节。`;
 }
 
 // 文生图（generate）模式：没有原图作基准，跳过「以原图为基准」的约束组
@@ -422,7 +422,7 @@ export function enhanceEditPrompt(prompt, { enabled = true, mode = 'edit' } = {}
         ? `姿态细节：${poseVisuals.join(' ')}${poseVisuals.length > 1 ? ' 多姿态协调：多个动作同时发生时，保持各动作的空间关系与肢体协调，接触部位贴合、互不遮挡、互不穿模，整体构图自然。' : ''}`
         : '';
     const dynamicsText = details.length > 0 ? `场景动态细节：${details.join('；')}。` : '';
-    // 短提示词检测：原文（去空白）不足 50 字或六维覆盖不足 3 维 → 提醒宿主补细节
+    // 短提示词检测：原文（去空白）不足 100 字或六维覆盖不足 3 维 → 提醒宿主补细节
     // （不代写、不写入 prompt），并点名缺失维度
     const originalLen = original.replace(/\s/g, '').length;
     const dims = countGuideDims(original);

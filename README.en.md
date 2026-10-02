@@ -4,7 +4,7 @@
 
 VisionForge is a deep rework of the open-source vision plugin [liustack/modlens](https://github.com/liustack/modlens) (MIT): it adds the Qwen engine, image generation and editing, an in-app settings card, and an official/plugin dual parse-priority dispatcher. It keeps the upstream's lightweight architecture — on DSH it is just a plugin directory; removing it deletes everything, no official DSH component is modified, and native functionality is untouched.
 
-> **Supported environment**: DSH Desktop **v2.0.14** / DSH harness **0.1.7-rc.2** (verified 2026-09). DSH major releases may change plugin interfaces — re-verify after an upgrade.
+> **Supported environment**: DSH Desktop **v2.0.17** / DSH harness **0.2.0-rc.2** (verified 2026-10). DSH major releases may change plugin interfaces — re-verify after an upgrade.
 
 ### Plugin version × DSH harness matrix
 
@@ -12,9 +12,10 @@ VisionForge is a deep rework of the open-source vision plugin [liustack/modlens]
 | --- | --- | --- | --- | --- |
 | 0.1.8 and earlier | ≤ 2026-09-27 | harness 0.1.x early | — | Fork/bridge of liustack/modlens 3.26.3 (branding + initial integration) |
 | 0.1.9 | 2026-09-28 | harness 0.1.7-rc.1 | — | First rewritten connection layer (~90% original, upstream credit kept); feature baseline |
-| **0.1.10** (current) | 2026-09-30 | harness 0.1.7 series (-rc.1 / -rc.2) | v2.0.14 (verified 2026-09) | Enhanced 0.1.9: compliance docs, settings card, marketplace prep |
+| 0.1.10 | 2026-09-30 | harness 0.1.7 series (-rc.1 / -rc.2) | v2.0.14 (verified 2026-09) | Enhanced 0.1.9: compliance docs, settings card, marketplace prep |
+| **0.2.1** (current) | 2026-10-02 | harness 0.2.0-rc.2 (verified 2026-10); 0.1.7 series compatible | v2.0.17 (verified 2026-10) | Enhanced 0.1.10: 100-char prompt floor + 6-dimension guide check + detail-writing guide + parallel multi-image (no timeout) and 5 bug fixes |
 
-> Install-level compatibility (npm `peerDependencies`): `@deepseek-ai/dsh-client-ui-primitives` allows `>=0.1.0-rc.1 <0.2.0-0` (any 0.1.x harness installs); the table lists verified versions. **harness 0.2.x and above are out of scope**.
+> Install-level compatibility (npm `peerDependencies`): `@deepseek-ai/dsh-client-ui-primitives` allows `>=0.0.1-rc.1 <0.1.0 || >=0.1.0-rc.1 <0.2.0-0 || >=0.2.0-0 <0.3.0-0` (harness 0.1.x and 0.2.x series install); the table lists verified versions.
 
 ---
 
